@@ -1,0 +1,29 @@
+name: SHInventoryPages
+version: '${project.version}'
+main: org.Cry_Legende.sHInventoryPages.SHInventoryPages
+api-version: '1.20'
+author: Cry_Legende
+softdepend: [PlaceholderAPI] # For placeholder support
+
+commands:
+  shinventorypages:
+    description: Main command for SHInventoryPages.
+    usage: /shinventorypages <reload|saveall>
+    permission: shinventorypages.admin
+    aliases: [ship]
+
+permissions:
+  shinventorypages.*:
+    description: Grants all permissions for SHInventoryPages.
+    children:
+      shinventorypages.admin: true
+      shinventorypages.pages.*: true
+  shinventorypages.admin:
+    description: Allows access to admin commands like reload.
+    default: op
+  shinventorypages.pages.*:
+    description: Wildcard for page amount permissions (e.g., shinventorypages.pages.5).
+    default: false # Ne pas donner par défaut
+  shinventorypages.pages.<number>: # Géré dynamiquement, mais bon à lister
+    description: Grants access up to a specific number of pages.
+    default: false

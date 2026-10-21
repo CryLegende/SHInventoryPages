@@ -1,0 +1,133 @@
+#----------------------------------------------------#
+#            SHInventoryPages Configuration          #
+#----------------------------------------------------#
+
+# --- Database Configuration ---
+database:
+  # Type of database to use: "sqlite", "mysql", "mariadb"
+  type: "mariadb"
+  sqlite:
+    # Filename for the SQLite database (relative to plugin folder)
+    file: "player_data.db"
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    database: Opale
+    username: utilisateur
+    password: 'CHANGE_ME'
+    # Extra JDBC properties, e.g., useSSL=false&autoReconnect=true
+    properties: useSSL=false&autoReconnect=true
+
+# --- Inventory Configuration ---
+inventory:
+  # Slot where the page switcher item will be placed (0-8 for the hotbar, 9-35 for main inventory).
+  switcher_slot: 17
+  # Maximum possible pages a player can have (Safety limit, ensure permissions don't exceed this)
+  max_possible_pages: 10
+  # Default number of pages for players who don't have a specific 'shinventorypages.pages.<number>' permission.
+  default_pages: 1
+  # Whether to prevent players from dropping the switcher item.
+  prevent_switcher_drop: true
+  # Whether to prevent players from moving the switcher item in their inventory.
+  prevent_switcher_move: true
+
+# --- Switcher Item Configuration ---
+# This is the item used to switch between inventory pages.
+switcher_item:
+  material: "PAPER"
+  name: '&bPages d''inventaire &7(&b%current_page%&7/&b%max_pages%&7)'
+  lore:
+    - ""
+    - "&7 Débloques des pages de l'inventaire"
+    - "&7 en complêtant certaines quêtes."
+    - ""
+    - "&7Clic droit &8&l» &bPage suivante"
+    - "&7Clic gauche &8&l» &bPage precedente"
+    - ""
+  # If true, the amount of the switcher item will equal the current page number.
+  # If false, 'fixed_amount' will be used.
+  amount_equals_page: true
+  # Fixed amount for the switcher item if 'amount_equals_page' is false.
+  fixed_amount: 1
+  # Add a glow effect to the switcher item (like an enchanted item without an enchant).
+  enchant_glow: true
+
+# --- Barrier Item Configuration ---
+# This item replaces the switcher in blacklisted worlds or when switching is disabled.
+barrier_item:
+  # Material is fixed to BARRIER, not configurable here.
+  name: "&cPages d'inventaire"
+  lore:
+    - ""
+    - "&7Vous ne pouvez pas changer"
+    - "&7de page dans cette zone."
+    - ""
+
+# --- Blacklisted Worlds ---
+# List of worlds where inventory page switching is disabled.
+# The barrier item will be shown instead of the switcher.
+blacklist:
+  worlds:
+    - "arene"
+    - "Revent"
+    # - "another_blacklisted_world"
+
+# --- Sounds Configuration ---
+sounds:
+  enabled: true
+  # Sound played when successfully switching a page.
+  # List of sounds: https://hub.spigotmc.org/javadocs/spigot/org/bukkit/Sound.html
+  switch_page: "UI_BUTTON_CLICK"
+  # Sound played when failing to switch a page (e.g., in a blacklisted world).
+  switch_fail: "BLOCK_ANVIL_LAND"
+  volume: 0.8  # Sound volume (0.0 to 1.0+)
+  pitch: 1.2   # Sound pitch (0.5 to 2.0)
+
+# --- Death Configuration ---
+death:
+  # What happens to items in SHInventoryPages on player death if keepInventory gamerule is false.
+  # "CURRENT": Only items on the current page are dropped/cleared.
+  # "ALL": Items from ALL pages are dropped/cleared.
+  # "NONE": No items from SHInventoryPages are dropped/cleared (behaves like keepInventory for these items).
+  # Vanilla drops (armor, offhand, hotbar/main inv NOT part of the current page if drop_mode=NONE)
+  # will still be handled by server/other plugins unless this plugin explicitly manages them.
+  drop_mode: "CURRENT"
+
+# --- Performance Configuration ---
+performance:
+  # Interval in seconds for automatic background saving of all online player data.
+  # Set to 0 to disable periodic auto-saving.
+  auto_save_interval: 300 # (5 minutes)
+  # Save the current page to the database when a player switches pages.
+  # Recommended to keep true for data safety, but can be false for slight performance gain if auto-save is frequent.
+  save_on_page_switch: true
+
+# --- PlaceholderAPI ---
+placeholders:
+  # Enable integration with PlaceholderAPI for %shinventorypages_...% placeholders.
+  enabled: true
+
+# --- Messages ---
+# You can use standard Bukkit color codes (&) and hex color codes (&#RRGGBB).
+messages:
+  prefix: "" # Le préfixe global &7&l« &b&lSH &8&l» &r sera appliqué à chaque message
+
+  # Général
+  no_permission: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission de faire cela."
+  only_players: "&7&l« &c&lSH &8&l» &7Cette commande ne peut être exécutée que par des joueurs."
+  player_not_found: "&7&l« &c&lSH &8&l» &7Le joueur &c%player% &7n'a pas été trouvé ou ne s'est jamais connecté."
+  
+  # Commande: /shinventorypages
+  no_permission_command: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission d'utiliser cette commande." # Spécifique pour la commande admin
+  reload_success: "&7&l« &a&lSH &8&l» &7La configuration a été rechargée &aavec succès&7."
+  reload_fail: "&7&l« &c&lSH &8&l» &7Une erreur est survenue lors du rechargement de la configuration. &cVérifiez la console&7."
+  save_all_started: "&7&l« &e&lSH &8&l» &7Démarrage de la sauvegarde des données de tous les joueurs..."
+  save_all_finished: "&7&l« &a&lSH &8&l» &7Le processus de sauvegarde des données de tous les joueurs a été mis en file d'attente/terminé (&avérifiez la console pour les détails&7)."
+  
+  # Interaction avec l'inventaire
+  cant_switch_here: "&7&l« &c&lSH &8&l» &7Vous ne pouvez pas changer de page d'inventaire dans cette zone."
+  cant_drop_switcher: "&7&l« &c&lSH &8&l» &7Vous ne pouvez pas jeter l'objet de changement de page !"
+  item_sent_to_next_page: "&7&l« &c&lSH &8&l» &7 &7Votre inventaire est plein, l'item a été mis sur l'autre page."
+  
+  # Placeholders & Mises à jour
+  max_pages_updated: "&7&l« &a&lSH &8&l» &7Votre nombre maximum de pages a été mis à jour à &a%max_pages%&7."
