@@ -18,6 +18,7 @@ import org.bukkit.permissions.PermissionAttachmentInfo;
 import org.bukkit.persistence.PersistentDataType;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -186,6 +187,9 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             // pour ne pas les perdre si on applique une page DB.
             // NOTE: Si c'est la première connexion, saveCurrentInventoryToData va prendre le kit de départ s'il y en a un.
             saveCurrentInventoryToData(player, playerDataToCache);
+            // Pages enregistrées avant le correctif du 24/10 : piles de plus de 99 ramenées avant qu'une page
+            // n'arrive dans l'inventaire réel ; ce qui ne trouve pas de place est rendu après l'application de la page
+            List<ItemStack> unplaced = playerDataToCache.splitOversizedStacks(switcherSlot);
 
             // IMPORTANT : On débloque le joueur car le chargement est fini
             unblockPageSwitching(player, LOADING_BLOCK_ID);
@@ -197,6 +201,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             // Mais attention, saveCurrentInventoryToData vient de sauver ce qu'il a sur lui.
             // Si on veut que la DB soit prioritaire (ex: crash serveur précédent), on ré-applique la page :
             applyInventoryPage(player, playerDataToCache.getCurrentPage());
+            giveOrDrop(player, unplaced);
 
             plugin.getLogger().info("Finished loading for " + player.getName() + ". Inventory ready.");
         } else {
@@ -231,15 +236,29 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         PlayerInventory inv = player.getInventory();
 
         ItemStack[] currentPageContents = new ItemStack[36];
+        List<ItemStack> excess = new ArrayList<>();
         for (int i = 0; i < 36; i++) {
             if (i == switcherSlot) {
                 currentPageContents[i] = null;
             } else {
                 ItemStack item = inv.getItem(i);
-                currentPageContents[i] = (item != null && item.getType() != Material.AIR) ? item.clone() : null;
+                if (item == null || item.getType() == Material.AIR) continue;
+                int chunk = PlayerInventoryData.serializableChunk(item);
+                if (item.getAmount() > chunk) {
+                    // Pile trop grosse dans l'inventaire réel : corrigée dans l'inventaire lui-même, sinon chaque
+                    // sauvegarde repartirait de la même pile et recréerait l'excédent
+                    excess.addAll(PlayerInventoryData.excessParts(item, chunk));
+                    item = item.clone();
+                    item.setAmount(chunk);
+                    inv.setItem(i, item);
+                }
+                currentPageContents[i] = item.clone();
             }
         }
         data.setPage(data.getCurrentPage(), currentPageContents);
+        if (!excess.isEmpty()) {
+            relocateLiveExcess(player, data, currentPageContents, excess);
+        }
 
         // --- GESTION DE L'ARMURE ET OFFHAND DÉSACTIVÉE (COMMENTÉE) ---
         // data.setHelmet(inv.getHelmet() != null ? inv.getHelmet().clone() : null);
@@ -251,9 +270,53 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         plugin.getLogger().finest("Saved live inventory (page " + data.getCurrentPage() + ") to PlayerData object for " + player.getName());
     }
 
+    /**
+     * Range l'excédent d'une pile trop grosse de l'inventaire réel : emplacements libres de la page courante
+     * (inventaire et données), puis autres pages, puis au sol aux pieds du joueur. Réparation silencieuse.
+     */
+    private void relocateLiveExcess(Player player, PlayerInventoryData data, ItemStack[] currentPageContents, List<ItemStack> parts) {
+        PlayerInventory inv = player.getInventory();
+        int total = 0;
+        int dropped = 0;
+        for (ItemStack part : parts) {
+            total += part.getAmount();
+            int free = -1;
+            for (int i = 0; i < 36 && free < 0; i++) {
+                if (i != switcherSlot && currentPageContents[i] == null) free = i;
+            }
+            if (free >= 0) {
+                currentPageContents[free] = part.clone();
+                inv.setItem(free, part);
+            } else if (!data.placeInFreeSlot(part, switcherSlot)) {
+                player.getWorld().dropItemNaturally(player.getLocation(), part);
+                dropped += part.getAmount();
+            }
+        }
+        plugin.getLogger().warning("Pile au-delà de la taille normale corrigée dans l'inventaire de " + player.getName()
+            + " : " + total + " objets redistribués" + (dropped > 0 ? ", dont " + dropped + " posés au sol" : ""));
+    }
+
+    /** Rend à un joueur connecté les stacks qui n'ont trouvé de place dans aucune page (au sol si l'inventaire est plein). */
+    private void giveOrDrop(Player player, List<ItemStack> parts) {
+        if (parts.isEmpty() || !player.isOnline()) return;
+        int dropped = 0;
+        for (ItemStack left : player.getInventory().addItem(parts.toArray(new ItemStack[0])).values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), left);
+            dropped += left.getAmount();
+        }
+        plugin.getLogger().warning("Excédent de piles trop grosses rendu à " + player.getName() + " : " + parts.size()
+            + " stack(s)" + (dropped > 0 ? ", dont " + dropped + " objets posés au sol" : ""));
+    }
+
     public void savePlayerData(PlayerInventoryData data, boolean async) {
         if (data == null) return;
         UUID uuid = data.getUuid();
+
+        // Un seul stack de plus de 99 bloquerait la sauvegarde de toutes les pages du joueur
+        for (ItemStack lost : data.splitOversizedStacks(switcherSlot)) {
+            plugin.getLogger().severe("Plus de place pour un excédent de stack de " + uuid + " : "
+                + lost.getAmount() + "x " + lost.getType() + " (non sauvegardé)");
+        }
 
         if (!async) {
             plugin.getLogger().fine("Performing synchronous save for player " + uuid);
@@ -336,6 +399,8 @@ public class InventoryManager implements ISHInventoryPagesAPI {
 
         plugin.getLogger().fine("Player " + player.getName() + " switching from page " + currentPage + " to " + newTargetPage);
         saveCurrentInventoryToData(player, data);
+        // la page cible ne doit pas arriver dans l'inventaire réel avec une pile de plus de 99
+        List<ItemStack> unplaced = data.splitOversizedStacks(switcherSlot);
 
         if (saveOnPageSwitch) {
             ItemStack[] pageContentsToSave = data.getPage(currentPage);
@@ -351,6 +416,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         applyInventoryPage(player, newTargetPage);
         data.setCurrentPage(newTargetPage);
         updateSwitcherItem(player);
+        giveOrDrop(player, unplaced);
 
         playSound(player, switchSound);
         plugin.getLogger().fine("Finished page switch for " + player.getName() + " to page " + newTargetPage);

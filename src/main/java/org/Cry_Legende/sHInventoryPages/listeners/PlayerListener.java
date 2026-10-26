@@ -163,6 +163,7 @@ public class PlayerListener implements Listener {
         int amountToStore = itemToPlace.getAmount();
         int currentPage = data.getCurrentPage();
         int maxPages = data.getMaxPages();
+        int reservedSlot = inventoryManager.getSwitcherSlot();  // jamais d'objet sur l'emplacement du sélecteur
 
         // --- ÉTAPE 1 : Simulation / Vérification de l'espace ---
         // On vérifie d'abord si on AURAIT assez de place, sans rien modifier.
@@ -176,10 +177,12 @@ public class PlayerListener implements Listener {
 
             ItemStack[] pageContents = data.getPage(pageToCheck);
             if (pageContents == null) {
-                // Page vide = 36 slots * 64 items (large place)
-                simulatedSpaceFound += (36 * itemToPlace.getMaxStackSize());
+                // Page vide = 36 slots * 64 items, moins l'emplacement réservé au sélecteur de pages
+                simulatedSpaceFound += ((reservedSlot >= 0 && reservedSlot < 36 ? 35 : 36) * itemToPlace.getMaxStackSize());
             } else {
-                for (ItemStack item : pageContents) {
+                for (int slot = 0; slot < pageContents.length; slot++) {
+                    if (slot == reservedSlot) continue;  // vidé à chaque sauvegarde : un objet posé ici serait détruit
+                    ItemStack item = pageContents[slot];
                     if (item == null || item.getType() == Material.AIR) {
                         simulatedSpaceFound += itemToPlace.getMaxStackSize();
                     } else if (item.isSimilar(itemToPlace)) {
@@ -224,16 +227,20 @@ public class PlayerListener implements Listener {
                 }
             }
 
-            // 2. Remplir les slots vides
+            // 2. Remplir les slots vides, un stack de taille normale par slot : un item stacké
+            // (WildStacker...) peut dépasser le maximum, et un stack de plus de 99 ne se sérialise pas
             if (remainingItem.getAmount() > 0) {
+                int maxStack = Math.max(1, remainingItem.getMaxStackSize());
                 for (int j = 0; j < pageContents.length; j++) {
                     if (remainingItem.getAmount() <= 0) break;
+                    if (j == reservedSlot) continue;
                     if (pageContents[j] == null || pageContents[j].getType() == Material.AIR) {
-                        pageContents[j] = remainingItem.clone();
-                        remainingItem.setAmount(0); // Tout est placé
+                        int chunk = Math.min(maxStack, remainingItem.getAmount());
+                        ItemStack placed = remainingItem.clone();
+                        placed.setAmount(chunk);
+                        pageContents[j] = placed;
+                        remainingItem.setAmount(remainingItem.getAmount() - chunk);
                         pageChanged = true;
-                        // Attention: on a cloné le reste, donc le stack dans l'inv est bon, on sort de la boucle interne
-                        break;
                     }
                 }
             }
