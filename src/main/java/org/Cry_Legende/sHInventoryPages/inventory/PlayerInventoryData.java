@@ -55,11 +55,23 @@ public class PlayerInventoryData {
         return maxPages;
     }
 
+    /**
+     * Les pages au-delà du nouveau maximum ne sont plus supprimées (leur contenu partait à la sauvegarde suivante) :
+     * elles restent en base, hors d'atteinte. Si la page courante dépasse le maximum, elle prend le numéro de la
+     * dernière page autorisée et le contenu de celle-ci part à l'ancien numéro : l'inventaire porté (qui est la
+     * page courante) ne change pas et n'écrase plus la page {@code maxPages} à la capture suivante.
+     */
     public void setMaxPages(int maxPages) {
         this.maxPages = maxPages;
-        if (this.currentPage > maxPages) this.currentPage = maxPages;
+        if (maxPages >= 1 && this.currentPage > maxPages) {
+            int hiddenPage = this.currentPage;
+            ItemStack[] displaced = pages.remove(maxPages);
+            ItemStack[] carried = pages.remove(hiddenPage);
+            if (displaced != null) pages.put(hiddenPage, displaced);
+            if (carried != null) pages.put(maxPages, carried);
+            this.currentPage = maxPages;
+        }
         if (this.currentPage < 1) this.currentPage = 1;
-        pages.keySet().removeIf(pageNumber -> pageNumber > maxPages);
     }
 
     public ItemStack[] getPage(int pageNumber) {

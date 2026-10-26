@@ -77,6 +77,10 @@ public class MySQLManager implements DatabaseManager {
 
     private Connection getConnection() throws SQLException {
         if (dataSource == null || dataSource.isClosed()) {
+            // Après onDisable (pool fermé), une tâche encore en cours recréait un pool que plus rien ne fermait
+            if (!plugin.isEnabled()) {
+                throw new SQLException("DataSource closed: plugin is disabled.");
+            }
             plugin.getLogger().warning("DataSource was null or closed. Attempting to reconnect...");
             if (!connect()) {
                 throw new SQLException("DataSource not initialized or connection failed.");

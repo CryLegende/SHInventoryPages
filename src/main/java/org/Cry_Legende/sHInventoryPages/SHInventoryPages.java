@@ -251,7 +251,9 @@ public final class SHInventoryPages extends JavaPlugin {
         // Sauvegarder les données actuelles avant de recharger, si le plugin était fonctionnel
         if (isFullyEnabled && inventoryManager != null) {
             getLogger().info("Saving player data before config reload...");
-            inventoryManager.saveAllPlayerData(false); // Synchrone pour s'assurer que c'est fait
+            // Asynchrone : les données restent en cache, et les écritures d'un joueur passent dans l'ordre
+            // (en synchrone, toutes les requêtes SQL bloquaient le thread principal pendant le /ship reload)
+            inventoryManager.saveAllPlayerData(true);
         }
 
         // Recharger la config

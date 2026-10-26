@@ -6,6 +6,7 @@ import org.Cry_Legende.sHInventoryPages.inventory.InventoryManager;
 import org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData;
 import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Bukkit;
+import org.bukkit.GameRules;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.entity.Entity;
@@ -56,7 +57,9 @@ public class PlayerListener implements Listener {
         handlePlayerDisconnect(event.getPlayer());
     }
 
-    @EventHandler(priority = EventPriority.MONITOR)
+    // ignoreCancelled : un kick annulé par un autre plugin laissait le joueur connecté sans données en cache
+    // ni blocage de chargement ("tried to switch page but data not loaded!").
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerKick(PlayerKickEvent event) {
         handlePlayerDisconnect(event.getPlayer());
     }
@@ -119,8 +122,8 @@ public class PlayerListener implements Listener {
                     // Force l'update visuel pour éviter les items fantômes
                     player.updateInventory();
 
-                    // Sauvegarde asynchrone pour sécuriser l'item
-                    inventoryManager.savePlayerData(data, true);
+                    // Sauvegarde asynchrone pour sécuriser l'item (regroupée : un objet par bloc miné sinon)
+                    inventoryManager.scheduleDeferredSave(player.getUniqueId());
                     return; // Item traité, on arrête.
                 }
             }
@@ -264,7 +267,7 @@ public class PlayerListener implements Listener {
             return;
         }
 
-        boolean keepInventoryGamerule = Boolean.TRUE.equals(player.getWorld().getGameRuleValue(org.bukkit.GameRule.KEEP_INVENTORY));
+        boolean keepInventoryGamerule = Boolean.TRUE.equals(player.getWorld().getGameRuleValue(GameRules.KEEP_INVENTORY));
         event.getDrops().removeIf(item -> item != null && inventoryManager.isSwitcherItem(item));
 
         if (keepInventoryGamerule) {
@@ -273,6 +276,11 @@ public class PlayerListener implements Listener {
 
         event.setKeepInventory(false);
         event.setKeepLevel(false);
+
+        // La page courante des données date de la dernière capture (changement de page, sauvegarde auto) :
+        // sans capture ici, les objets rangés depuis (coffre, ender chest) retombaient une seconde fois
+        // et ceux ramassés depuis disparaissaient.
+        inventoryManager.saveCurrentInventoryToData(player, data);
 
         List<ItemStack> itemsToDropFromPages = new ArrayList<>();
         String dropMode = configManager.getDeathDropMode().toUpperCase();
@@ -290,6 +298,7 @@ public class PlayerListener implements Listener {
             }
         } else if (dropMode.equals("ALL")) {
             for (Integer pageNum : new HashSet<>(data.getAllPages().keySet())) {
+                if (pageNum > data.getMaxPages()) continue; // pages conservées hors d'atteinte (permission retirée)
                 ItemStack[] pageContents = data.getPage(pageNum);
                 if (pageContents != null) {
                     for (int i = 0; i < pageContents.length; i++) {
@@ -326,7 +335,9 @@ public class PlayerListener implements Listener {
             Player onlinePlayer = Bukkit.getPlayer(player.getUniqueId());
             if (onlinePlayer != null && onlinePlayer.isOnline()) {
                 PlayerInventory pInv = onlinePlayer.getInventory();
-                if (!keepInventoryGamerule) {
+                // Un plugin passé après celui-ci (parcours, mort en spectateur...) a pu garder l'inventaire :
+                // ses objets ne sont alors pas tombés et ne doivent pas être effacés.
+                if (!keepInventoryGamerule && !event.getKeepInventory()) {
                     for (int i = 0; i < 36; i++) {
                         if (i != inventoryManager.getSwitcherSlot()) {
                             pInv.setItem(i, null);

@@ -27,6 +27,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 
@@ -51,6 +52,17 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     private final NamespacedKey switcherPDCKey;
 
     private final Map<UUID, Set<String>> apiBlockedPlayers = new ConcurrentHashMap<>();
+
+    /**
+     * Dernière opération en base de chaque joueur. Chargements et sauvegardes d'un même joueur s'exécutent dans
+     * l'ordre : sans cela, une reconnexion rapide (changement de serveur aller-retour) pouvait lire la base avant
+     * que la sauvegarde de la déconnexion soit écrite, et une sauvegarde ancienne pouvait passer après une récente.
+     */
+    private final Map<UUID, CompletableFuture<?>> dbQueues = new ConcurrentHashMap<>();
+    /** Chargement en cours de chaque joueur : un chargement d'une session précédente est ignoré. */
+    private final Map<UUID, Object> loadTokens = new ConcurrentHashMap<>();
+    /** Joueurs dont une sauvegarde différée est déjà programmée (thread principal). */
+    private final Set<UUID> deferredSaves = new HashSet<>();
 
     // Identifiant pour le blocage pendant le chargement initial
     private static final String LOADING_BLOCK_ID = "shinventorypages:loading_data";
@@ -95,57 +107,84 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         blockPageSwitching(player, LOADING_BLOCK_ID);
 
         // 2. Feedback visuel : On met la barrière tout de suite pour dire "Chargement..."
-        if (switcherSlot >= 0 && switcherSlot < 36) {
-            player.getInventory().setItem(switcherSlot, createBarrierItem());
-        }
+        placeInSwitcherSlot(player, createBarrierItem());
 
         plugin.getLogger().fine("Starting data load for " + player.getName() + "...");
 
         // 3. Lancement de la tentative de chargement (Tentative 1)
-        attemptLoadPlayerData(player, 1);
+        Object token = new Object();
+        loadTokens.put(player.getUniqueId(), token);
+        attemptLoadPlayerData(player, 1, token);
     }
 
-    private void attemptLoadPlayerData(Player player, int attempt) {
-        if (!player.isOnline()) return; // Le joueur est parti, on arrête.
+    /**
+     * Vrai si ce chargement est toujours celui de la session en cours. Player.isOnline() ne suffit pas :
+     * il vaut aussi true pour l'objet d'une session terminée dès que le joueur s'est reconnecté.
+     */
+    private boolean isCurrentLoad(Player player, Object token) {
+        UUID uuid = player.getUniqueId();
+        return loadTokens.get(uuid) == token && Bukkit.getPlayer(uuid) == player;
+    }
+
+    private void attemptLoadPlayerData(Player player, int attempt, Object token) {
+        if (!isCurrentLoad(player, token)) return; // Le joueur est parti (ou s'est reconnecté), on arrête.
 
         UUID uuid = player.getUniqueId();
         int maxPages = getMaxPagesForPlayer(player);
         final int MAX_RETRIES = 3; // Nombre max d'essais
 
-        plugin.getDatabaseManager().loadPlayerInventoriesAndEquipment(uuid)
-            .thenAcceptAsync(loadedData -> {
-                // --- SUCCÈS DU CHARGEMENT ---
-                processLoadedData(player, loadedData, maxPages);
+        queueDb(uuid, () -> plugin.getDatabaseManager().loadPlayerInventoriesAndEquipment(uuid))
+            .whenCompleteAsync((loadedData, ex) -> {
+                if (!isCurrentLoad(player, token)) {
+                    plugin.getLogger().fine("Ignoring data load of a previous session for " + player.getName());
+                    return;
+                }
+                if (ex == null) {
+                    // --- SUCCÈS DU CHARGEMENT ---
+                    // Une erreur ici n'est pas un échec de lecture : pas de nouvel essai, qui ré-appliquerait la page
+                    try {
+                        loadTokens.remove(uuid, token);
+                        processLoadedData(player, loadedData, maxPages);
+                    } catch (Exception e) {
+                        plugin.getLogger().log(Level.SEVERE, "Error while applying loaded data for " + player.getName(), e);
+                    }
+                    return;
+                }
 
-            }, Bukkit.getScheduler().getMainThreadExecutor(plugin)) // Retour sur le thread principal pour Bukkit API
-
-            .exceptionally(ex -> {
                 // --- ÉCHEC DU CHARGEMENT ---
                 plugin.getLogger().log(Level.WARNING, "Attempt " + attempt + " failed to load data for " + player.getName());
 
                 if (attempt < MAX_RETRIES) {
                     // Réessai dans 20 ticks (1 seconde)
                     plugin.getLogger().info("Retrying load for " + player.getName() + " (Attempt " + (attempt + 1) + "/" + MAX_RETRIES + ") in 1 second...");
-                    Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                        if (player.isOnline()) {
-                            attemptLoadPlayerData(player, attempt + 1);
-                        }
-                    }, 20L);
+                    Bukkit.getScheduler().runTaskLater(plugin, () -> attemptLoadPlayerData(player, attempt + 1, token), 20L);
                 } else {
                     // ÉCHEC TOTAL après 3 essais
                     plugin.getLogger().severe("CRITICAL: Could not load inventory for " + player.getName() + " after " + MAX_RETRIES + " attempts.");
-
-                    Bukkit.getScheduler().runTask(plugin, () -> {
-                        if (player.isOnline()) {
-                            // Kick de sécurité.
-                            // C'est essentiel pour éviter que le joueur joue avec un inventaire vide et que le plugin
-                            // écrase ses données existantes dans la DB lors de la sauvegarde automatique ou du quit.
-                            player.kickPlayer(MessageUtil.colorize("&cError loading your inventory data.\nPlease rejoin the server.\n(Database Timeout Protection)"));
-                        }
-                    });
+                    // Kick de sécurité.
+                    // C'est essentiel pour éviter que le joueur joue avec un inventaire vide et que le plugin
+                    // écrase ses données existantes dans la DB lors de la sauvegarde automatique ou du quit.
+                    player.kickPlayer(MessageUtil.colorize("&cError loading your inventory data.\nPlease rejoin the server.\n(Database Timeout Protection)"));
                 }
-                return null;
-            });
+            }, Bukkit.getScheduler().getMainThreadExecutor(plugin)); // Retour sur le thread principal pour Bukkit API
+    }
+
+    /**
+     * Ajoute une opération en base à la file du joueur : elle démarre quand la précédente est terminée (même en échec).
+     */
+    private <T> CompletableFuture<T> queueDb(UUID uuid, Supplier<CompletableFuture<T>> operation) {
+        CompletableFuture<T> result = new CompletableFuture<>();
+        CompletableFuture<?> tail = dbQueues.compute(uuid, (key, previous) -> {
+            CompletableFuture<?> start = previous != null ? previous : CompletableFuture.completedFuture(null);
+            return start.handle((ignored, error) -> null)
+                .thenCompose(ignored -> operation.get())
+                .whenComplete((value, error) -> {
+                    if (error != null) result.completeExceptionally(error);
+                    else result.complete(value);
+                });
+        });
+        tail.whenComplete((ignored, error) -> dbQueues.remove(uuid, tail));
+        return result;
     }
 
     private void processLoadedData(Player player, PlayerInventoryData loadedData, int maxPages) {
@@ -215,6 +254,13 @@ public class InventoryManager implements ISHInventoryPagesAPI {
 
     public void unloadPlayerData(Player player) {
         UUID uuid = player.getUniqueId();
+        Player current = Bukkit.getPlayer(uuid);
+        if (current != null && current != player) {
+            // Objet d'une session terminée : le cache et les blocages appartiennent à la nouvelle session
+            plugin.getLogger().fine("Ignoring unload of a previous session for " + player.getName());
+            return;
+        }
+        loadTokens.remove(uuid);
         PlayerInventoryData data = playerDataCache.get(uuid);
 
         if (data != null) {
@@ -328,13 +374,29 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         } else {
             plugin.getLogger().fine("Performing asynchronous save for player " + uuid);
             // Copie prise sur le thread appelant : l'écriture async ne touche pas aux structures vivantes
-            CompletableFuture<Void> future = plugin.getDatabaseManager().saveFullPlayerInventoryData(data.snapshot());
+            PlayerInventoryData snapshot = data.snapshot();
+            CompletableFuture<Void> future = queueDb(uuid, () -> plugin.getDatabaseManager().saveFullPlayerInventoryData(snapshot));
             future.whenComplete((result, ex) -> {
                 if (ex != null) {
                     plugin.getLogger().log(Level.SEVERE, "Failed asynchronous save for player " + uuid, ex);
                 }
             });
         }
+    }
+
+    /**
+     * Sauvegarde asynchrone regroupée : au plus une écriture complète par joueur toutes les 2 secondes
+     * (un joueur à l'inventaire plein qui mine déclenchait une sauvegarde de toutes ses pages par objet ramassé).
+     */
+    public void scheduleDeferredSave(UUID uuid) {
+        if (!deferredSaves.add(uuid)) return;
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            deferredSaves.remove(uuid);
+            PlayerInventoryData data = playerDataCache.get(uuid);
+            if (data != null) {
+                savePlayerData(data, true);
+            }
+        }, 40L);
     }
 
     public void saveAllPlayerData(boolean async) {
@@ -362,9 +424,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             plugin.getLogger().warning("Player " + player.getName() + " tried to switch page but data not loaded!");
             MessageUtil.sendMessage(player, "&cData loading... Please wait or relog if persistent.");
             // Au cas où, on remet le switcher en mode "Barrière"
-            if (switcherSlot >= 0 && switcherSlot < 36) {
-                player.getInventory().setItem(switcherSlot, createBarrierItem());
-            }
+            placeInSwitcherSlot(player, createBarrierItem());
             return;
         }
 
@@ -405,7 +465,12 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         if (saveOnPageSwitch) {
             ItemStack[] pageContentsToSave = data.getPage(currentPage);
             if (pageContentsToSave != null) {
-                plugin.getDatabaseManager().savePlayerInventoryPage(data.getUuid(), currentPage, pageContentsToSave)
+                // Copie : la page quittée reste modifiable (débordement, mort) pendant l'écriture asynchrone
+                ItemStack[] copy = new ItemStack[pageContentsToSave.length];
+                for (int i = 0; i < copy.length; i++) {
+                    copy[i] = pageContentsToSave[i] != null ? pageContentsToSave[i].clone() : null;
+                }
+                queueDb(data.getUuid(), () -> plugin.getDatabaseManager().savePlayerInventoryPage(data.getUuid(), currentPage, copy))
                     .exceptionally(ex -> {
                         plugin.getLogger().log(Level.SEVERE, "Failed async save of page " + currentPage + " for " + player.getName() + " on page switch.", ex);
                         return null;
@@ -462,9 +527,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
 
         // Si pas de data, on considère que c'est en chargement ou erreur => Barrière
         if (data == null) {
-            if (switcherSlot >= 0 && switcherSlot < 36) {
-                player.getInventory().setItem(switcherSlot, createBarrierItem());
-            }
+            placeInSwitcherSlot(player, createBarrierItem());
             return;
         }
 
@@ -474,9 +537,27 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         } else {
             switcherToSet = createSwitcherItem(data.getCurrentPage(), data.getMaxPages());
         }
-        if (switcherSlot >= 0 && switcherSlot < 36) {
-            player.getInventory().setItem(switcherSlot, switcherToSet);
+        placeInSwitcherSlot(player, switcherToSet);
+    }
+
+    /**
+     * Pose le sélecteur (ou la barrière) sur son emplacement. Un vrai objet qui s'y trouvait (ramassé pendant la
+     * réapparition, posé par un autre plugin...) était écrasé, et ignoré par la capture de page : il est rendu au
+     * joueur, ou posé à ses pieds si l'inventaire est plein. Réparation silencieuse.
+     */
+    private void placeInSwitcherSlot(Player player, ItemStack switcherItem) {
+        if (switcherSlot < 0 || switcherSlot >= 36) return;
+        PlayerInventory inv = player.getInventory();
+        ItemStack displaced = inv.getItem(switcherSlot);
+        inv.setItem(switcherSlot, switcherItem);
+        if (displaced == null || displaced.getType().isAir() || isSwitcherItem(displaced)) return;
+        int dropped = 0;
+        for (ItemStack left : inv.addItem(displaced).values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), left);
+            dropped += left.getAmount();
         }
+        plugin.getLogger().warning("Objet trouvé sur l'emplacement du sélecteur de " + player.getName() + " : "
+            + displaced.getAmount() + "x " + displaced.getType() + " rendu" + (dropped > 0 ? " (" + dropped + " posés au sol)" : ""));
     }
 
     public ItemStack createSwitcherItem(int currentPage, int maxPages) {
@@ -596,7 +677,8 @@ public class InventoryManager implements ISHInventoryPagesAPI {
 
     @Override
     public void blockPageSwitching(@NotNull Player player, @NotNull String blockIdentifier) {
-        apiBlockedPlayers.computeIfAbsent(player.getUniqueId(), k -> new HashSet<>()).add(blockIdentifier);
+        // Ensemble concurrent : l'API peut être appelée hors du thread principal
+        apiBlockedPlayers.computeIfAbsent(player.getUniqueId(), k -> ConcurrentHashMap.newKeySet()).add(blockIdentifier);
         plugin.getLogger().fine("Page switching blocked for " + player.getName() + " by identifier: " + blockIdentifier);
         if (Bukkit.isPrimaryThread()) {
             updateSwitcherItem(player);
@@ -608,11 +690,15 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     @Override
     public void unblockPageSwitching(@NotNull Player player, @NotNull String blockIdentifier) {
         UUID uuid = player.getUniqueId();
-        Set<String> blocks = apiBlockedPlayers.get(uuid);
-        if (blocks != null) {
+        boolean[] wasBlocked = {false};
+        // Retrait atomique : un blocage ajouté en même temps ne peut pas être perdu avec l'ensemble vidé
+        apiBlockedPlayers.computeIfPresent(uuid, (key, blocks) -> {
+            wasBlocked[0] = true;
             blocks.remove(blockIdentifier);
-            if (blocks.isEmpty()) {
-                apiBlockedPlayers.remove(uuid);
+            return blocks.isEmpty() ? null : blocks;
+        });
+        if (wasBlocked[0]) {
+            if (!apiBlockedPlayers.containsKey(uuid)) {
                 plugin.getLogger().fine("All API page switch blocks removed for " + player.getName());
             }
             if (Bukkit.isPrimaryThread()) {

@@ -21,13 +21,11 @@ public class InventoryListener implements Listener {
     private final SHInventoryPages plugin;
     private final InventoryManager inventoryManager;
     private final ConfigManager configManager;
-    private final int switcherSlot;
 
     public InventoryListener(SHInventoryPages plugin) {
         this.plugin = plugin;
         this.inventoryManager = plugin.getInventoryManager();
         this.configManager = plugin.getConfigManager();
-        this.switcherSlot = configManager.getSwitcherSlot();
     }
 
     // Gère les interactions spécifiques au mode créatif pour éviter la duplication.
@@ -36,6 +34,8 @@ public class InventoryListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (player.getGameMode() != GameMode.CREATIVE) return;
 
+        // Lu à chaque événement : après un /ship reload qui change l'emplacement, l'ancien restait protégé
+        int switcherSlot = inventoryManager.getSwitcherSlot();
         int clickedSlot = event.getSlot();
 
         // Si le joueur clique sur le slot du switcher avec le clic molette (CLONE_STACK)
@@ -76,6 +76,7 @@ public class InventoryListener implements Listener {
     @EventHandler(priority = EventPriority.HIGH) // Peut être HIGH ou NORMAL
     public void onPlayerInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        int switcherSlot = inventoryManager.getSwitcherSlot();
 
         // Clic dans l'inventaire du joueur
         if (event.getClickedInventory() instanceof PlayerInventory) {
@@ -147,7 +148,8 @@ public class InventoryListener implements Listener {
                 // (déjà couvert par le bloc if précédent si clickedSlotInPlayerInv == switcherSlot, mais redondance pour clarté)
 
                 // Empêcher de déplacer le switcher via hotbar key (SHIFT + numéro)
-                if (event.getAction() == InventoryAction.HOTBAR_SWAP || event.getAction() == InventoryAction.HOTBAR_MOVE_AND_READD) {
+                // (HOTBAR_MOVE_AND_READD n'est plus émis et sera retiré : HOTBAR_SWAP couvre les deux cas)
+                if (event.getAction() == InventoryAction.HOTBAR_SWAP) {
                     int hotbarButtonSlot = event.getHotbarButton(); // Slot de la hotbar (0-8)
 
                     // ### CORRECTION ICI ###
@@ -197,6 +199,7 @@ public class InventoryListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) return;
 
         if (configManager.preventSwitcherMove() && event.getInventory().equals(player.getInventory())) {
+            int switcherSlot = inventoryManager.getSwitcherSlot();
             for (int affectedPlayerSlot : event.getInventorySlots()) {
                 if (affectedPlayerSlot == switcherSlot) {
                     event.setCancelled(true);

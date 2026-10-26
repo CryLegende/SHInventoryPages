@@ -3,12 +3,15 @@ package org.Cry_Legende.sHInventoryPages.config;
 import org.Cry_Legende.sHInventoryPages.SHInventoryPages;
 import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Registry;
 import org.bukkit.Sound;
 import org.bukkit.configuration.file.FileConfiguration;
 
 import java.util.ArrayList; // AJOUT
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.logging.Level;
 import java.util.stream.Collectors; // AJOUT
 
@@ -162,16 +165,30 @@ public class ConfigManager {
         if (soundName == null || soundName.isEmpty()) {
             return null; // Sound disabled
         }
+        Sound sound = sound(soundName);
+        if (sound != null) {
+            return sound;
+        }
+        plugin.getLogger().warning("Invalid sound name '" + soundName + "' at path '" + path + "' in config.yml. Using default: " + defaultSound);
+        sound = sound(defaultSound);
+        if (sound == null) {
+            plugin.getLogger().severe("Default sound name '" + defaultSound + "' is also invalid! Disabling sound for " + path);
+        }
+        return sound; // null si les deux sont invalides
+    }
+
+    /** Son lu en config : ancien nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click). Sound.valueOf est retiré en 26.x. */
+    static Sound sound(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim();
+        if (s.indexOf(':') >= 0 || s.indexOf('.') >= 0) {
+            NamespacedKey key = NamespacedKey.fromString(s.toLowerCase(Locale.ROOT));
+            return key == null ? null : Registry.SOUND_EVENT.get(key);
+        }
         try {
-            return Sound.valueOf(soundName.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            plugin.getLogger().warning("Invalid sound name '" + soundName + "' at path '" + path + "' in config.yml. Using default: " + defaultSound);
-            try {
-                return Sound.valueOf(defaultSound.toUpperCase());
-            } catch (IllegalArgumentException ex) {
-                plugin.getLogger().severe("Default sound name '" + defaultSound + "' is also invalid! Disabling sound for " + path);
-                return null; // Both invalid
-            }
+            return (Sound) Sound.class.getField(s.toUpperCase(Locale.ROOT)).get(null);
+        } catch (ReflectiveOperationException | ClassCastException e) {
+            return null;
         }
     }
 
