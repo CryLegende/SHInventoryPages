@@ -1,434 +1,79 @@
 package org.Cry_Legende.sHInventoryPages.listeners;
 
 import org.Cry_Legende.sHInventoryPages.SHInventoryPages;
-import org.Cry_Legende.sHInventoryPages.config.ConfigManager;
 import org.Cry_Legende.sHInventoryPages.inventory.InventoryManager;
-import org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData;
-import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Bukkit;
-import org.bukkit.GameRules;
-import org.bukkit.Material;
-import org.bukkit.Sound;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.entity.ItemSpawnEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.player.*;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.PlayerInventory;
-import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerGameModeChangeEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
+import java.util.UUID;
+import java.util.function.Consumer;
 
+/** Cycle de vie : connexion, départ, mort, réapparition, changements de monde et de mode de jeu. */
 public class PlayerListener implements Listener {
 
     private final SHInventoryPages plugin;
-    private final InventoryManager inventoryManager;
-    private final ConfigManager configManager;
+    private final InventoryManager manager;
 
     public PlayerListener(SHInventoryPages plugin) {
         this.plugin = plugin;
-        this.inventoryManager = plugin.getInventoryManager();
-        this.configManager = plugin.getConfigManager();
+        this.manager = plugin.getInventoryManager();
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPlayerJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-        inventoryManager.loadPlayerData(player);
-//        new BukkitRunnable() {
-//            @Override
-//            public void run() {
-//                if (player.isOnline()) {
-//                    inventoryManager.loadPlayerData(player);
-//                }
-//            }
-//        }.runTaskLater(plugin, 5L);
+        manager.loadPlayerData(event.getPlayer());
     }
 
+    /**
+     * Tout départ, kick compris, passe par PlayerQuitEvent. MONITOR : après les plugins qui rendent un inventaire
+     * au départ (parcours...), pour capturer l'inventaire définitif.
+     */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerQuit(PlayerQuitEvent event) {
-        handlePlayerDisconnect(event.getPlayer());
+        manager.unloadPlayerData(event.getPlayer());
     }
 
-    // ignoreCancelled : un kick annulé par un autre plugin laissait le joueur connecté sans données en cache
-    // ni blocage de chargement ("tried to switch page but data not loaded!").
+    /** Tôt : un plugin de tombe ou de butin ne doit jamais récupérer le sélecteur. */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onPlayerDeathEarly(PlayerDeathEvent event) {
+        manager.stripInterfaceItems(event.getDrops());
+    }
+
+    /** Tard : la décision de garder l'inventaire (gamerule, parcours, autres plugins) est prise. */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onPlayerKick(PlayerKickEvent event) {
-        handlePlayerDisconnect(event.getPlayer());
-    }
-
-    private void handlePlayerDisconnect(Player player) {
-        inventoryManager.unloadPlayerData(player);
-    }
-
-    /**
-     * Gère le débordement des items (ex: /give ou crate quand full).
-     * Utilise ItemSpawnEvent pour attraper l'item AVANT qu'il ne tombe dans le vide (SkyBlock).
-     */
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onItemSpawn(ItemSpawnEvent event) {
-        Item itemEntity = event.getEntity();
-
-        // --- SÉCURITÉ 1 : Délai de ramassage ---
-        // Si l'item a un délai (ex: joueur qui drop avec 'Q'), on l'ignore.
-        // Les items systèmes (give/overflow) ont généralement un délai de 0.
-        // Seuil à 10 ticks (0.5s) pour être sûr.
-        if (itemEntity.getPickupDelay() > 10) {
-            return;
-        }
-
-        // Rayon de recherche très court (1.0 bloc) pour éviter de voler les items du voisin
-        List<Entity> nearbyEntities = itemEntity.getNearbyEntities(1.0, 1.0, 1.0);
-
-        for (Entity entity : nearbyEntities) {
-            if (entity instanceof Player player) {
-
-                // --- SÉCURITÉ 2 : Distance stricte ---
-                // L'item doit spawner quasi SUR le joueur (cas typique d'un inventaire plein)
-                if (player.getLocation().distanceSquared(itemEntity.getLocation()) > 2.25) { // ~1.5 blocks au carré
-                    continue;
-                }
-
-                // --- SÉCURITÉ 3 : Vérification de l'inventaire actuel ---
-                // Si l'inventaire actuel a de la place (slot vide ou stack incomplet),
-                // on laisse Minecraft gérer le ramassage normalement.
-                if (canItemFitInInventory(player.getInventory(), itemEntity.getItemStack())) {
-                    continue;
-                }
-
-                PlayerInventoryData data = inventoryManager.getPlayerData(player.getUniqueId());
-                // Si le joueur n'a pas de pages supplémentaires, on ne fait rien.
-                if (data == null || data.getMaxPages() <= 1) {
-                    continue;
-                }
-
-                // Tentative de placement dans les pages suivantes
-                boolean itemPlaced = tryPlaceItemInOverflow(data, itemEntity.getItemStack());
-
-                if (itemPlaced) {
-                    event.setCancelled(true); // Annule le spawn physique (empêche la chute dans le vide)
-                    player.playSound(player.getLocation(), Sound.ENTITY_ITEM_PICKUP, 0.5f, 1.5f);
-
-                    // Message optionnel pour prévenir le joueur
-                    MessageUtil.sendMessage(player, configManager.getMessage("item_sent_to_next_page"));
-
-                    // Force l'update visuel pour éviter les items fantômes
-                    player.updateInventory();
-
-                    // Sauvegarde asynchrone pour sécuriser l'item (regroupée : un objet par bloc miné sinon)
-                    inventoryManager.scheduleDeferredSave(player.getUniqueId());
-                    return; // Item traité, on arrête.
-                }
-            }
-        }
-    }
-
-    /**
-     * Vérifie si un item peut rentrer dans l'inventaire actuel.
-     */
-    private boolean canItemFitInInventory(PlayerInventory inv, ItemStack item) {
-        if (item == null) return true;
-
-        // 1. Slot complètement vide ?
-        if (inv.firstEmpty() != -1) return true;
-
-        // 2. Stack incomplet compatible ?
-        for (ItemStack content : inv.getStorageContents()) {
-            if (content != null && content.isSimilar(item)) {
-                if (content.getAmount() < content.getMaxStackSize()) {
-                    int spaceRemaining = content.getMaxStackSize() - content.getAmount();
-                    if (spaceRemaining >= item.getAmount()) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Essaye de placer l'item dans les pages suivantes.
-     * Pour éviter les duolications avec ItemSpawnEvent, cette méthode fonctionne en mode "Tout ou Rien".
-     * Elle ne retourne true (et modifie les pages) que si l'item ENTIER peut être stocké.
-     */
-    private boolean tryPlaceItemInOverflow(PlayerInventoryData data, ItemStack itemToPlace) {
-        if (itemToPlace == null || itemToPlace.getType() == Material.AIR) {
-            return false;
-        }
-
-        int amountToStore = itemToPlace.getAmount();
-        int currentPage = data.getCurrentPage();
-        int maxPages = data.getMaxPages();
-        int reservedSlot = inventoryManager.getSwitcherSlot();  // jamais d'objet sur l'emplacement du sélecteur
-
-        // --- ÉTAPE 1 : Simulation / Vérification de l'espace ---
-        // On vérifie d'abord si on AURAIT assez de place, sans rien modifier.
-        int simulatedSpaceFound = 0;
-
-        for (int i = 1; i < maxPages; i++) {
-            if (simulatedSpaceFound >= amountToStore) break;
-
-            int pageToCheck = (currentPage - 1 + i) % maxPages + 1;
-            if (pageToCheck == currentPage) continue;
-
-            ItemStack[] pageContents = data.getPage(pageToCheck);
-            if (pageContents == null) {
-                // Page vide = 36 slots * 64 items, moins l'emplacement réservé au sélecteur de pages
-                simulatedSpaceFound += ((reservedSlot >= 0 && reservedSlot < 36 ? 35 : 36) * itemToPlace.getMaxStackSize());
-            } else {
-                for (int slot = 0; slot < pageContents.length; slot++) {
-                    if (slot == reservedSlot) continue;  // vidé à chaque sauvegarde : un objet posé ici serait détruit
-                    ItemStack item = pageContents[slot];
-                    if (item == null || item.getType() == Material.AIR) {
-                        simulatedSpaceFound += itemToPlace.getMaxStackSize();
-                    } else if (item.isSimilar(itemToPlace)) {
-                        simulatedSpaceFound += (item.getMaxStackSize() - item.getAmount());
-                    }
-                }
-            }
-        }
-
-        // Si pas assez de place pour TOUT l'item, on annule (pour éviter de dupliquer ou perdre une moitié)
-        if (simulatedSpaceFound < amountToStore) {
-            return false;
-        }
-
-        // --- ÉTAPE 2 : Application réelle ---
-        ItemStack remainingItem = itemToPlace.clone();
-
-        for (int i = 1; i < maxPages; i++) {
-            if (remainingItem.getAmount() <= 0) break;
-
-            int pageToCheck = (currentPage - 1 + i) % maxPages + 1;
-            if (pageToCheck == currentPage) continue;
-
-            ItemStack[] pageContents = data.getPage(pageToCheck);
-            if (pageContents == null) {
-                pageContents = inventoryManager.createEmptyInventory();
-                data.setPage(pageToCheck, pageContents);
-            }
-
-            boolean pageChanged = false;
-
-            // 1. Remplir les stacks existants
-            for (ItemStack item : pageContents) {
-                if (remainingItem.getAmount() <= 0) break;
-                if (item != null && item.isSimilar(remainingItem) && item.getAmount() < item.getMaxStackSize()) {
-                    int space = item.getMaxStackSize() - item.getAmount();
-                    int toAdd = Math.min(space, remainingItem.getAmount());
-
-                    item.setAmount(item.getAmount() + toAdd);
-                    remainingItem.setAmount(remainingItem.getAmount() - toAdd);
-                    pageChanged = true;
-                }
-            }
-
-            // 2. Remplir les slots vides, un stack de taille normale par slot : un item stacké
-            // (WildStacker...) peut dépasser le maximum, et un stack de plus de 99 ne se sérialise pas
-            if (remainingItem.getAmount() > 0) {
-                int maxStack = Math.max(1, remainingItem.getMaxStackSize());
-                for (int j = 0; j < pageContents.length; j++) {
-                    if (remainingItem.getAmount() <= 0) break;
-                    if (j == reservedSlot) continue;
-                    if (pageContents[j] == null || pageContents[j].getType() == Material.AIR) {
-                        int chunk = Math.min(maxStack, remainingItem.getAmount());
-                        ItemStack placed = remainingItem.clone();
-                        placed.setAmount(chunk);
-                        pageContents[j] = placed;
-                        remainingItem.setAmount(remainingItem.getAmount() - chunk);
-                        pageChanged = true;
-                    }
-                }
-            }
-
-            if (pageChanged) {
-                data.setPage(pageToCheck, pageContents);
-            }
-        }
-
-        return true;
-    }
-
-
-    @EventHandler(priority = EventPriority.HIGH)
     public void onPlayerDeath(PlayerDeathEvent event) {
-        Player player = event.getEntity();
-        PlayerInventoryData data = inventoryManager.getPlayerData(player.getUniqueId());
-        if (data == null) {
-            plugin.getLogger().warning("PlayerDeathEvent: No PlayerInventoryData for " + player.getName());
-            event.getDrops().removeIf(item -> item != null && inventoryManager.isSwitcherItem(item));
-            return;
-        }
-
-        boolean keepInventoryGamerule = Boolean.TRUE.equals(player.getWorld().getGameRuleValue(GameRules.KEEP_INVENTORY));
-        event.getDrops().removeIf(item -> item != null && inventoryManager.isSwitcherItem(item));
-
-        if (keepInventoryGamerule) {
-            return;
-        }
-
-        event.setKeepInventory(false);
-        event.setKeepLevel(false);
-
-        // La page courante des données date de la dernière capture (changement de page, sauvegarde auto) :
-        // sans capture ici, les objets rangés depuis (coffre, ender chest) retombaient une seconde fois
-        // et ceux ramassés depuis disparaissaient.
-        inventoryManager.saveCurrentInventoryToData(player, data);
-
-        List<ItemStack> itemsToDropFromPages = new ArrayList<>();
-        String dropMode = configManager.getDeathDropMode().toUpperCase();
-
-        if (dropMode.equals("CURRENT")) {
-            ItemStack[] currentPageContents = data.getPage(data.getCurrentPage());
-            if (currentPageContents != null) {
-                for (int i = 0; i < currentPageContents.length; i++) {
-                    ItemStack item = currentPageContents[i];
-                    if (item != null && item.getType() != Material.AIR) {
-                        itemsToDropFromPages.add(item.clone());
-                        currentPageContents[i] = null;
-                    }
-                }
-            }
-        } else if (dropMode.equals("ALL")) {
-            for (Integer pageNum : new HashSet<>(data.getAllPages().keySet())) {
-                if (pageNum > data.getMaxPages()) continue; // pages conservées hors d'atteinte (permission retirée)
-                ItemStack[] pageContents = data.getPage(pageNum);
-                if (pageContents != null) {
-                    for (int i = 0; i < pageContents.length; i++) {
-                        ItemStack item = pageContents[i];
-                        if (item != null && item.getType() != Material.AIR) {
-                            itemsToDropFromPages.add(item.clone());
-                            pageContents[i] = null;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (dropMode.equals("CURRENT") || dropMode.equals("ALL")) {
-            event.getDrops().clear();
-            event.getDrops().addAll(itemsToDropFromPages);
-
-            PlayerInventory inv = player.getInventory();
-            if (inv.getHelmet() != null) event.getDrops().add(inv.getHelmet().clone());
-            data.setHelmet(null);
-            if (inv.getChestplate() != null) event.getDrops().add(inv.getChestplate().clone());
-            data.setChestplate(null);
-            if (inv.getLeggings() != null) event.getDrops().add(inv.getLeggings().clone());
-            data.setLeggings(null);
-            if (inv.getBoots() != null) event.getDrops().add(inv.getBoots().clone());
-            data.setBoots(null);
-            if (inv.getItemInOffHand().getType() != Material.AIR) event.getDrops().add(inv.getItemInOffHand().clone());
-            data.setOffHand(null);
-        }
-
-        inventoryManager.savePlayerData(data, true);
-
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            Player onlinePlayer = Bukkit.getPlayer(player.getUniqueId());
-            if (onlinePlayer != null && onlinePlayer.isOnline()) {
-                PlayerInventory pInv = onlinePlayer.getInventory();
-                // Un plugin passé après celui-ci (parcours, mort en spectateur...) a pu garder l'inventaire :
-                // ses objets ne sont alors pas tombés et ne doivent pas être effacés.
-                if (!keepInventoryGamerule && !event.getKeepInventory()) {
-                    for (int i = 0; i < 36; i++) {
-                        if (i != inventoryManager.getSwitcherSlot()) {
-                            pInv.setItem(i, null);
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST)
-    public void onPlayerRespawn(PlayerRespawnEvent event) {
-        Player player = event.getPlayer();
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                Player onlinePlayer = Bukkit.getPlayer(player.getUniqueId());
-                if (onlinePlayer == null || !onlinePlayer.isOnline()) return;
-                if (inventoryManager.getPlayerData(onlinePlayer.getUniqueId()) == null) {
-                    inventoryManager.loadPlayerData(onlinePlayer);
-                } else {
-                    PlayerInventoryData data = inventoryManager.getPlayerData(onlinePlayer.getUniqueId());
-                    if (data != null) {
-                        inventoryManager.updateSwitcherItem(onlinePlayer);
-                    }
-                }
-            }
-        }.runTaskLater(plugin, 1L);
-    }
-
-    @EventHandler
-    public void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
-        Player player = event.getPlayer();
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            Player p = Bukkit.getPlayer(player.getUniqueId());
-            if (p != null && p.isOnline()) inventoryManager.updateSwitcherItem(p);
-        }, 1L);
-    }
-
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onPlayerDropItem(PlayerDropItemEvent event) {
-        if (configManager.preventSwitcherDrop() && inventoryManager.isSwitcherItem(event.getItemDrop().getItemStack(), event.getPlayer())) {
-            event.setCancelled(true);
-            MessageUtil.sendMessage(event.getPlayer(), configManager.getMessage("cant_drop_switcher"));
-        }
-    }
-
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onPlayerSwapHandItems(PlayerSwapHandItemsEvent event) {
-        if (configManager.preventSwitcherMove()) {
-            ItemStack mainHandItem = event.getMainHandItem();
-            ItemStack offHandItem = event.getOffHandItem();
-            if (inventoryManager.isSwitcherItem(mainHandItem, event.getPlayer()) ||
-                inventoryManager.isSwitcherItem(offHandItem, event.getPlayer())) {
-                event.setCancelled(true);
-            }
-        }
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onPlayerCommandPreprocess(PlayerCommandPreprocessEvent event) {
-        String command = event.getMessage().toLowerCase().split(" ")[0];
-        if (command.startsWith("/lp") || command.startsWith("/luckperms") || command.contains("permission")) {
-            Player player = event.getPlayer();
-            Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                Player onlinePlayer = Bukkit.getPlayer(player.getUniqueId());
-                if (onlinePlayer == null || !onlinePlayer.isOnline()) return;
-                PlayerInventoryData data = inventoryManager.getPlayerData(onlinePlayer.getUniqueId());
-                if (data != null) {
-                    int oldMaxPages = data.getMaxPages();
-                    int newMaxPages = inventoryManager.getMaxPagesForPlayer(onlinePlayer);
-                    if (oldMaxPages != newMaxPages) {
-                        data.setMaxPages(newMaxPages);
-                        if (data.getCurrentPage() > newMaxPages && newMaxPages > 0) {
-                            data.setCurrentPage(newMaxPages);
-                            inventoryManager.switchPage(onlinePlayer, false);
-                        }
-                        inventoryManager.updateSwitcherItem(onlinePlayer);
-                        MessageUtil.sendMessage(onlinePlayer, configManager.getMessage("max_pages_updated", "%max_pages%", String.valueOf(newMaxPages)));
-                    }
-                }
-            }, 20L);
-        }
+        manager.handleDeath(event);
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerRespawn(PlayerRespawnEvent event) {
+        nextTick(event.getPlayer(), manager::handleRespawn);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
+        nextTick(event.getPlayer(), manager::updateSwitcherItem);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onGamemodeChange(PlayerGameModeChangeEvent event) {
-        Player player = event.getPlayer();
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            Player p = Bukkit.getPlayer(player.getUniqueId());
-            if (p != null && p.isOnline()) inventoryManager.updateSwitcherItem(p);
-        }, 1L);
+        nextTick(event.getPlayer(), manager::updateSwitcherItem);
+    }
+
+    private void nextTick(Player player, Consumer<Player> action) {
+        UUID uuid = player.getUniqueId();
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            Player online = Bukkit.getPlayer(uuid);
+            if (online != null) action.accept(online);
+        });
     }
 }

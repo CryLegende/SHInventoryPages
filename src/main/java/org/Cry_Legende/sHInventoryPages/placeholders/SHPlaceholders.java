@@ -28,18 +28,18 @@ public class SHPlaceholders extends PlaceholderExpansion {
     @Override
     @NotNull
     public String getAuthor() {
-        return plugin.getDescription().getAuthors().toString();
+        return String.join(", ", plugin.getPluginMeta().getAuthors());
     }
 
     @Override
     @NotNull
     public String getVersion() {
-        return plugin.getDescription().getVersion();
+        return plugin.getPluginMeta().getVersion();
     }
 
     @Override
     public boolean persist() {
-        return true; // Keep placeholders available even if plugin is disabled temporarily
+        return true; // gardée au /papi reload ; retirée par SHInventoryPages (placeholders.enabled, arrêt)
     }
 
     @Override
@@ -59,7 +59,7 @@ public class SHPlaceholders extends PlaceholderExpansion {
 
         PlayerInventoryData data = inventoryManager.getPlayerData(onlinePlayer.getUniqueId());
         if (data == null) {
-            return "Loading..."; // Or null, depending on preference
+            return plugin.getConfigManager().getMessage("placeholder_loading");
         }
 
         params = params.toLowerCase(); // Standardize parameter name

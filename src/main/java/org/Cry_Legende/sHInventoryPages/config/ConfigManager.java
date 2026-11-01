@@ -1,6 +1,7 @@
 package org.Cry_Legende.sHInventoryPages.config;
 
 import org.Cry_Legende.sHInventoryPages.SHInventoryPages;
+import org.Cry_Legende.sHInventoryPages.inventory.InventoryManager;
 import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -33,7 +34,7 @@ public class ConfigManager {
 
     // --- Database ---
     public String getDatabaseType() {
-        return config.getString("database.type", "sqlite");
+        return config.getString("database.type", "mariadb");
     }
 
     public String getSqliteFile() {
@@ -64,44 +65,119 @@ public class ConfigManager {
         return config.getString("database.mysql.properties", "useSSL=false");
     }
 
+    public int getMysqlPoolSize() {
+        return Math.max(1, config.getInt("database.mysql.pool_size", 4));
+    }
+
+    /** Fils d'exécution de la base (lu au démarrage). */
+    public int getDatabaseThreads() {
+        return Math.max(1, config.getInt("database.threads", 4));
+    }
+
     // --- Inventory ---
     public int getSwitcherSlot() {
-        int slot = config.getInt("inventory.switcher_slot", 8);
+        int slot = config.getInt("inventory.switcher_slot", 17);
         if (slot < 0 || slot > 35) {
-            plugin.getLogger().warning("Invalid switcher_slot value (" + slot + ") in config.yml. Defaulting to 8.");
-            return 8;
+            plugin.getLogger().warning("Invalid switcher_slot value (" + slot + ") in config.yml. Defaulting to 17.");
+            return 17;
         }
         return slot;
     }
 
     public int getMaxPossiblePages() {
-        return config.getInt("inventory.max_possible_pages", 10);
+        return Math.max(1, config.getInt("inventory.max_possible_pages", 10));
     }
 
     public int getDefaultPages() {
-        return config.getInt("inventory.default_pages", 1);
+        return Math.max(1, config.getInt("inventory.default_pages", 1));
     }
 
-    public boolean preventSwitcherDrop() {
-        return config.getBoolean("inventory.prevent_switcher_drop", true);
+    public int getSwitchCooldownTicks() {
+        return Math.max(0, config.getInt("inventory.switch_cooldown_ticks", 4));
     }
 
-    public boolean preventSwitcherMove() {
-        return config.getBoolean("inventory.prevent_switcher_move", true);
+    public int getCaptureInterval() {
+        return Math.max(0, config.getInt("inventory.capture_interval", 5));
+    }
+
+    public int getPermissionCheckInterval() {
+        return Math.max(0, config.getInt("inventory.permission_check_interval", 5));
+    }
+
+    // --- Overflow ---
+    public boolean isOverflowEnabled() {
+        return config.getBoolean("overflow.enabled", true);
+    }
+
+    public double getOverflowCaptureRadius() {
+        return Math.max(0.0, config.getDouble("overflow.capture_radius", 1.5));
+    }
+
+    public boolean isCaptureBrokenBlockDrops() {
+        return config.getBoolean("overflow.capture_broken_block_drops", true);
+    }
+
+    /** Objet sans propriétaire posé par un plugin : distance horizontale maximale aux pieds du joueur. */
+    public double getOverflowFeetRadius() {
+        return Math.max(0.0, config.getDouble("overflow.feet_radius", 0.75));
+    }
+
+    /** Plugins dont les objets posés au sol sont des mécaniques du monde ou des décors, jamais des dons. */
+    public List<String> getOverflowIgnoredPlugins() {
+        return config.getStringList("overflow.ignored_plugins");
+    }
+
+    public double getOverflowLootRadius() {
+        return Math.max(0.0, config.getDouble("overflow.loot_radius", 3.0));
+    }
+
+    public double getOverflowExplosionRadius() {
+        return Math.max(0.0, config.getDouble("overflow.explosion_radius", 10.0));
+    }
+
+    public int getOverflowReservationTicks() {
+        return Math.max(1, config.getInt("overflow.reservation_ticks", 60));
+    }
+
+    public int getDeferredSaveTicks() {
+        return Math.max(1, config.getInt("performance.deferred_save_ticks", 40));
+    }
+
+    public int getShutdownSaveTimeout() {
+        return Math.max(5, config.getInt("performance.shutdown_save_timeout", 30));
+    }
+
+    public int getEndOfSessionRetrySeconds() {
+        return Math.max(0, config.getInt("performance.end_of_session_retry_seconds", 180));
+    }
+
+    public boolean saveVanillaDataOnPageSwitch() {
+        return config.getBoolean("performance.save_player_file_on_page_switch", true);
+    }
+
+    public int getOverflowNoticeCooldownTicks() {
+        return Math.max(0, config.getInt("overflow.notice_cooldown_ticks", 60));
+    }
+
+    public Sound getOverflowSound() {
+        return getSound("overflow.sound", "ENTITY_ITEM_PICKUP");
+    }
+
+    public float getOverflowSoundVolume() {
+        return (float) config.getDouble("overflow.sound_volume", 0.5);
+    }
+
+    public float getOverflowSoundPitch() {
+        return (float) config.getDouble("overflow.sound_pitch", 1.5);
     }
 
     // --- Switcher Item ---
     public Material getSwitcherItemMaterial() {
-        try {
-            return Material.valueOf(config.getString("switcher_item.material", "PAPER").toUpperCase());
-        } catch (IllegalArgumentException e) {
-            plugin.getLogger().warning("Invalid switcher_item material in config.yml. Defaulting to PAPER.");
-            return Material.PAPER;
-        }
+        return material("switcher_item.material", Material.PAPER);
     }
 
     public String getSwitcherItemName() {
-        return config.getString("switcher_item.name", "&bPage Switcher (&e%current_page%&b/&e%max_pages%&b)");
+        return config.getString("switcher_item.name", "&bPages d'inventaire &7(&b%current_page%&7/&b%max_pages%&7)");
     }
 
     public List<String> getSwitcherItemLore() {
@@ -117,7 +193,7 @@ public class ConfigManager {
     }
 
     public boolean hasEnchantGlow() {
-        return config.getBoolean("switcher_item.enchant_glow", false);
+        return config.getBoolean("switcher_item.enchant_glow", true);
     }
 
     // --- Blacklist ---
@@ -127,12 +203,21 @@ public class ConfigManager {
 
     // --- Barrier Item ---
     public Material getBarrierItemMaterial() {
-        // Note: Le matériel est fixe (BARRIER), pas configurable ici
-        return Material.BARRIER;
+        return material("barrier_item.material", Material.BARRIER);
+    }
+
+    private Material material(String path, Material fallback) {
+        String name = config.getString(path, fallback.name());
+        Material material = name == null ? null : Material.matchMaterial(name);
+        if (material == null || !material.isItem() || material.isAir()) {
+            plugin.getLogger().warning("Invalid material '" + name + "' at '" + path + "' in config.yml. Using " + fallback + ".");
+            return fallback;
+        }
+        return material;
     }
 
     public String getBarrierItemName() {
-        return config.getString("barrier_item.name", "&cInterdit de changer d'inventaire ici");
+        return config.getString("barrier_item.name", "&cPages d'inventaire");
     }
 
     public List<String> getBarrierItemLore() {
@@ -193,10 +278,15 @@ public class ConfigManager {
     }
 
     // --- Death ---
-    public String getDeathDropMode() {
-        return config.getString("death.drop_mode", "CURRENT").toUpperCase();
+    public InventoryManager.DeathMode getDeathDropMode() {
+        String raw = config.getString("death.drop_mode", "CURRENT");
+        try {
+            return InventoryManager.DeathMode.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            plugin.getLogger().warning("Invalid death.drop_mode '" + raw + "' in config.yml. Using CURRENT.");
+            return InventoryManager.DeathMode.CURRENT;
+        }
     }
-    // public boolean combineAllPagesDrop() { return config.getBoolean("death.combine_all_pages_drop", true); } // Non utilisée apparemment
 
     // --- Performance ---
     public int getAutoSaveInterval() {
@@ -209,7 +299,7 @@ public class ConfigManager {
 
     // --- Messages ---
     public String getPluginPrefix() {
-        return config.getString("messages.prefix", "&8[&bSHInvPages&8] &r");
+        return config.getString("messages.prefix", "");
     }
 
     /**

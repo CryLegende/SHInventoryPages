@@ -1,14 +1,14 @@
 name: SHInventoryPages
 version: '${project.version}'
 main: org.Cry_Legende.sHInventoryPages.SHInventoryPages
-api-version: '1.20'
+api-version: '1.21'
 author: Cry_Legende
 softdepend: [PlaceholderAPI] # For placeholder support
 
 commands:
   shinventorypages:
     description: Main command for SHInventoryPages.
-    usage: /shinventorypages <reload|saveall>
+    usage: /shinventorypages <reload|saveall|info <joueur>|recover <fichier> [force]>
     permission: shinventorypages.admin
     aliases: [ship]
 

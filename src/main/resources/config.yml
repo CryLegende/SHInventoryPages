@@ -1,13 +1,16 @@
 #----------------------------------------------------#
-#            SHInventoryPages Configuration          #
+#            SHInventoryPages - Configuration        #
 #----------------------------------------------------#
+# Tout est rechargeable par /ship reload, sauf la section database (redémarrage).
+# Couleurs : codes & et &#RRGGBB. Sons : nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click) ; "" = aucun son.
 
-# --- Database Configuration ---
 database:
-  # Type of database to use: "sqlite", "mysql", "mariadb"
+  # "mariadb", "mysql" ou "sqlite"
   type: "mariadb"
+  # Fils d'exécution réservés aux lectures et écritures (jamais le thread principal)
+  threads: 4
   sqlite:
-    # Filename for the SQLite database (relative to plugin folder)
+    # Fichier relatif au dossier du plugin
     file: "player_data.db"
   mysql:
     host: 127.0.0.1
@@ -15,24 +18,65 @@ database:
     database: Opale
     username: utilisateur
     password: 'CHANGE_ME'
-    # Extra JDBC properties, e.g., useSSL=false&autoReconnect=true
+    # Propriétés JDBC supplémentaires
     properties: useSSL=false&autoReconnect=true
+    # Connexions ouvertes au plus
+    pool_size: 4
 
-# --- Inventory Configuration ---
 inventory:
-  # Slot where the page switcher item will be placed (0-8 for the hotbar, 9-35 for main inventory).
+  # Emplacement du sélecteur de pages (0-8 : barre d'action, 9-35 : inventaire). Jamais utilisé pour un objet.
   switcher_slot: 17
-  # Maximum possible pages a player can have (Safety limit, ensure permissions don't exceed this)
+  # Plafond absolu de pages, quelles que soient les permissions
   max_possible_pages: 10
-  # Default number of pages for players who don't have a specific 'shinventorypages.pages.<number>' permission.
+  # Pages des joueurs sans permission shinventorypages.pages.<nombre>
   default_pages: 1
-  # Whether to prevent players from dropping the switcher item.
-  prevent_switcher_drop: true
-  # Whether to prevent players from moving the switcher item in their inventory.
-  prevent_switcher_move: true
+  # Délai minimal entre deux changements de page d'un joueur (ticks, 20 = 1 s) : anti double-clic
+  switch_cooldown_ticks: 4
+  # Relecture des permissions de pages des joueurs connectés (secondes, 0 = jamais)
+  permission_check_interval: 5
+  # Capture de l'inventaire porté de chaque joueur (secondes, 0 = jamais) : copie fraîche de la page courante en
+  # mémoire et sélecteur remis s'il a disparu (/clear). Une capture identique n'écrit rien en base.
+  capture_interval: 5
 
-# --- Switcher Item Configuration ---
-# This is the item used to switch between inventory pages.
+# Débordement : un objet donné à un joueur dont l'inventaire porté est plein est rangé dans ses autres pages,
+# piles partielles d'abord, puis emplacements vides, page par page. Ce qui ne tient nulle part reste au sol.
+# Est donné : un objet qui lui est destiné (/give), un objet tombé du bloc qu'il vient de casser, ou le reste d'un
+# don qu'un autre plugin pose à ses pieds (crate, quête, boutique, butin qu'un plugin lui renvoie à ses pieds).
+# Jamais : un objet jeté, le butin tombé là où une créature ou un joueur meurt, un distributeur, une explosion,
+# une ferme, un piston ou un œuf aux pieds du joueur (règles de ramassage de l'île), un objet posé par un plugin
+# de ignored_plugins, ni un objet qu'un plugin marque en le faisant apparaître : les piles de WildStacker (spawners
+# empilés, butin des créatures empilées) restent au sol, leur quantité réelle n'est connue que de WildStacker.
+# Rien n'est rangé tant que les pages sont figées (monde interdit, parcours).
+overflow:
+  enabled: true
+  # Objet destiné à un joueur (/give) : distance (blocs) de ses pieds ou de ses yeux
+  capture_radius: 1.5
+  # Reste d'un don posé par un plugin : distance horizontale (blocs) aux pieds du joueur
+  feet_radius: 0.75
+  # Objets posés au sol qui sont des mécaniques du monde ou des décors, jamais des dons : nom d'un plugin (tout le
+  # plugin) ou classe/paquet Java (une seule mécanique, le reste du plugin garde ses dons)
+  ignored_plugins:
+    # Sortie des générateurs ; les générateurs rendus au joueur restent des dons
+    - "me.kafein.elitegenerator.feature.DropRouter"
+    # Objets de bonus et cookies décoratifs (rendus non ramassables juste après leur apparition)
+    - "SHItemsBoosts"
+    - "SHCookieClicker"
+    # Billets ramassés pour de l'argent
+    - "MoneyFromMobs"
+  # Objets qui tombent d'un bloc que le joueur vient de casser (minage à distance)
+  capture_broken_block_drops: true
+  # Autour d'une mort ou d'un distributeur, et d'une explosion (blocs) : objets du monde, jamais rangés
+  loot_radius: 3.0
+  explosion_radius: 10.0
+  # Durée (ticks) pendant laquelle la place d'un objet laissé au ramassage reste réservée s'il n'est pas ramassé
+  reservation_ticks: 60
+  # Délai minimal entre deux messages de débordement à un même joueur (ticks)
+  notice_cooldown_ticks: 60
+  sound: "ENTITY_ITEM_PICKUP"
+  sound_volume: 0.5
+  sound_pitch: 1.5
+
+# Sélecteur de pages. %current_page% et %max_pages% sont remplacés dans le nom et la description.
 switcher_item:
   material: "PAPER"
   name: '&bPages d''inventaire &7(&b%current_page%&7/&b%max_pages%&7)'
@@ -44,18 +88,15 @@ switcher_item:
     - "&7Clic droit &8&l» &bPage suivante"
     - "&7Clic gauche &8&l» &bPage precedente"
     - ""
-  # If true, the amount of the switcher item will equal the current page number.
-  # If false, 'fixed_amount' will be used.
+  # Quantité affichée = numéro de la page portée ; sinon fixed_amount
   amount_equals_page: true
-  # Fixed amount for the switcher item if 'amount_equals_page' is false.
   fixed_amount: 1
-  # Add a glow effect to the switcher item (like an enchanted item without an enchant).
+  # Reflet d'enchantement
   enchant_glow: true
 
-# --- Barrier Item Configuration ---
-# This item replaces the switcher in blacklisted worlds or when switching is disabled.
+# Remplace le sélecteur dans les mondes interdits, pendant un blocage (parcours...) et pendant le chargement
 barrier_item:
-  # Material is fixed to BARRIER, not configurable here.
+  material: "BARRIER"
   name: "&cPages d'inventaire"
   lore:
     - ""
@@ -63,71 +104,89 @@ barrier_item:
     - "&7de page dans cette zone."
     - ""
 
-# --- Blacklisted Worlds ---
-# List of worlds where inventory page switching is disabled.
-# The barrier item will be shown instead of the switcher.
 blacklist:
+  # Mondes où l'on ne change pas de page
   worlds:
     - "arene"
     - "Revent"
-    # - "another_blacklisted_world"
 
-# --- Sounds Configuration ---
 sounds:
+  # Coupe tous les sons du plugin
   enabled: true
-  # Sound played when successfully switching a page.
-  # List of sounds: https://hub.spigotmc.org/javadocs/spigot/org/bukkit/Sound.html
   switch_page: "UI_BUTTON_CLICK"
-  # Sound played when failing to switch a page (e.g., in a blacklisted world).
   switch_fail: "BLOCK_ANVIL_LAND"
-  volume: 0.8  # Sound volume (0.0 to 1.0+)
-  pitch: 1.2   # Sound pitch (0.5 to 2.0)
+  volume: 0.8
+  pitch: 1.2
 
-# --- Death Configuration ---
 death:
-  # What happens to items in SHInventoryPages on player death if keepInventory gamerule is false.
-  # "CURRENT": Only items on the current page are dropped/cleared.
-  # "ALL": Items from ALL pages are dropped/cleared.
-  # "NONE": No items from SHInventoryPages are dropped/cleared (behaves like keepInventory for these items).
-  # Vanilla drops (armor, offhand, hotbar/main inv NOT part of the current page if drop_mode=NONE)
-  # will still be handled by server/other plugins unless this plugin explicitly manages them.
+  # Quand l'inventaire n'est pas gardé (gamerule keepInventory à false et aucun plugin qui le garde) :
+  #   CURRENT : la page portée tombe comme un inventaire normal, les autres pages sont gardées.
+  #   ALL     : la page portée et toutes les autres pages débloquées tombent (sauf pages figées : monde de la
+  #             liste noire, parcours ; elles suivent alors CURRENT).
+  #   NONE    : la page portée est gardée (36 emplacements) ; armure et main secondaire tombent.
   drop_mode: "CURRENT"
 
-# --- Performance Configuration ---
 performance:
-  # Interval in seconds for automatic background saving of all online player data.
-  # Set to 0 to disable periodic auto-saving.
-  auto_save_interval: 300 # (5 minutes)
-  # Save the current page to the database when a player switches pages.
-  # Recommended to keep true for data safety, but can be false for slight performance gain if auto-save is frequent.
+  # Sauvegarde automatique de tous les joueurs (secondes, 0 = désactivée). Seules les pages modifiées sont écrites.
+  auto_save_interval: 300
+  # Après un changement de page qui a modifié la page quittée : écriture en base tout de suite (au plus une par
+  # seconde, une rafale de clics est regroupée) ; un simple feuilletage n'écrit rien. false : écriture regroupée
+  # (voir deferred_save_ticks)
   save_on_page_switch: true
+  # Avec cette écriture, enregistrement du fichier joueur de Minecraft dans le même tick : après un arrêt brutal,
+  # l'inventaire porté et les pages en base restent du même moment (sinon un objet passé d'une page à l'autre peut
+  # exister deux fois)
+  save_player_file_on_page_switch: true
+  # Regroupement des écritures après un rangement (ticks)
+  deferred_save_ticks: 40
+  # Base injoignable à la déconnexion : nouveaux essais pendant ce délai (secondes), puis copie dans
+  # plugins/SHInventoryPages/unsaved/ (réimport : /ship recover <fichier>, joueur hors ligne)
+  end_of_session_retry_seconds: 180
+  # Attente maximale des écritures à l'arrêt du serveur (secondes) ; au-delà, copie dans unsaved/
+  shutdown_save_timeout: 30
 
-# --- PlaceholderAPI ---
 placeholders:
-  # Enable integration with PlaceholderAPI for %shinventorypages_...% placeholders.
+  # %shinventorypages_current_page% et %shinventorypages_max_pages%
   enabled: true
 
-# --- Messages ---
-# You can use standard Bukkit color codes (&) and hex color codes (&#RRGGBB).
 messages:
-  prefix: "" # Le préfixe global &7&l« &b&lSH &8&l» &r sera appliqué à chaque message
+  # Préfixe ajouté devant chaque message (les messages ci-dessous portent déjà le leur)
+  prefix: ""
 
-  # Général
   no_permission: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission de faire cela."
   only_players: "&7&l« &c&lSH &8&l» &7Cette commande ne peut être exécutée que par des joueurs."
-  player_not_found: "&7&l« &c&lSH &8&l» &7Le joueur &c%player% &7n'a pas été trouvé ou ne s'est jamais connecté."
-  
-  # Commande: /shinventorypages
-  no_permission_command: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission d'utiliser cette commande." # Spécifique pour la commande admin
+  player_not_found: "&7&l« &c&lSH &8&l» &7Le joueur &c%player% &7n'est pas connecté ou ses pages ne sont pas chargées."
+
+  # /shinventorypages (%label% = commande tapée)
+  no_permission_command: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission d'utiliser cette commande."
+  command_usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/%label% <reload|saveall|info <joueur>|recover <fichier> [force]>"
+  recover_stale: "&7&l« &c&lSH &8&l» &7Le joueur s'est reconnecté depuis &c%file% &7: la base est plus récente. Ajoutez &cforce &7pour écraser."
+  # /ship recover (%file% = fichier de plugins/SHInventoryPages/unsaved/)
+  recover_not_found: "&7&l« &c&lSH &8&l» &7Fichier de secours &c%file% &7introuvable."
+  recover_player_online: "&7&l« &c&lSH &8&l» &7Le joueur doit être &chors ligne &7pour réimporter ses pages."
+  recover_done: "&7&l« &a&lSH &8&l» &7Pages de &a%file% &7réimportées en base."
+  recover_failed: "&7&l« &c&lSH &8&l» &7Réimport de &c%file% &7échoué. &cVérifiez la console&7."
   reload_success: "&7&l« &a&lSH &8&l» &7La configuration a été rechargée &aavec succès&7."
   reload_fail: "&7&l« &c&lSH &8&l» &7Une erreur est survenue lors du rechargement de la configuration. &cVérifiez la console&7."
-  save_all_started: "&7&l« &e&lSH &8&l» &7Démarrage de la sauvegarde des données de tous les joueurs..."
-  save_all_finished: "&7&l« &a&lSH &8&l» &7Le processus de sauvegarde des données de tous les joueurs a été mis en file d'attente/terminé (&avérifiez la console pour les détails&7)."
-  
-  # Interaction avec l'inventaire
+  save_all_started: "&7&l« &e&lSH &8&l» &7Sauvegarde des pages de tous les joueurs..."
+  save_all_finished: "&7&l« &a&lSH &8&l» &7Pages de tous les joueurs &asauvegardées&7."
+  save_all_failed: "&7&l« &c&lSH &8&l» &7Certaines pages n'ont pas pu être sauvegardées. &cVérifiez la console&7."
+  info_header: "&7&l« &e&lSH &8&l» &7Pages de &e%player% &7: page portée &e%current_page%&7/&e%max_pages%"
+  # %page%, %slots% (emplacements occupés), %items% (objets)
+  info_page_line: "&8 - &7Page &e%page% &8: &e%slots%&7/36 emplacements, &e%items% &7objets"
+  info_hidden_page_line: "&8 - &7Page &c%page% &8(&ccachée, permission&8) : &e%slots%&7/36 emplacements, &e%items% &7objets"
+  # Page dont la ligne en base est illisible : verrouillée, jamais réécrite (voir la console)
+  info_locked_page_line: "&8 - &7Page &4%page% &8(&4illisible, verrouillée&8)"
+
+  # Inventaire
   cant_switch_here: "&7&l« &c&lSH &8&l» &7Vous ne pouvez pas changer de page d'inventaire dans cette zone."
   cant_drop_switcher: "&7&l« &c&lSH &8&l» &7Vous ne pouvez pas jeter l'objet de changement de page !"
-  item_sent_to_next_page: "&7&l« &c&lSH &8&l» &7 &7Votre inventaire est plein, l'item a été mis sur l'autre page."
-  
-  # Placeholders & Mises à jour
+  data_loading: "&7&l« &e&lSH &8&l» &7Vos pages d'inventaire sont en cours de chargement, patientez un instant."
+  # Objets rangés dans une autre page (%amount% objets, à partir de la page %page%)
+  item_sent_to_next_page: "&7&l« &e&lSH &8&l» &7Inventaire plein : &e%amount% &7objet(s) rangé(s) en page &e%page%&7."
+  all_pages_full: "&7&l« &c&lSH &8&l» &7Toutes vos pages d'inventaire sont &cpleines &7: des objets sont restés au sol."
   max_pages_updated: "&7&l« &a&lSH &8&l» &7Votre nombre maximum de pages a été mis à jour à &a%max_pages%&7."
+  # Déconnexion quand les pages n'ont pas pu être lues (la base est protégée de tout écrasement)
+  load_failed_kick: "&cVos pages d'inventaire n'ont pas pu être chargées.\n&7Reconnectez-vous dans un instant."
+  # Valeur des placeholders tant que les pages ne sont pas chargées
+  placeholder_loading: "..."

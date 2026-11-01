@@ -1,12 +1,14 @@
 package org.Cry_Legende.sHInventoryPages.database;
 
 import org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData;
-import org.bukkit.inventory.ItemStack;
 
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 
+/**
+ * Stockage des pages. Toutes les méthodes de lecture et d'écriture sont bloquantes : elles tournent sur le
+ * thread de la base de données du plugin, jamais sur le thread principal, et les opérations d'un même joueur
+ * sont exécutées dans l'ordre (InventoryManager).
+ */
 public interface DatabaseManager {
 
     boolean connect();
@@ -15,23 +17,16 @@ public interface DatabaseManager {
 
     boolean createTables();
 
-    CompletableFuture<Map<Integer, ItemStack[]>> loadPlayerInventories(UUID uuid);
+    /**
+     * Pages enregistrées et page courante d'un joueur, ou null s'il n'a encore rien en base.
+     *
+     * @param maxPossiblePages nombre de pages sous lequel aucune page lue n'est jamais écartée
+     */
+    PlayerInventoryData load(UUID uuid, int maxPossiblePages) throws Exception;
 
-    CompletableFuture<Void> savePlayerInventoryPage(UUID uuid, int pageNumber, ItemStack[] contents);
+    /** Écrit les pages modifiées depuis la dernière lecture ou écriture, et la page courante si elle a changé. */
+    void save(PlayerInventoryData snapshot) throws Exception;
 
-    CompletableFuture<Void> saveAllPlayerPages(UUID uuid, Map<Integer, ItemStack[]> pageData);
-
-    CompletableFuture<Void> deletePlayerInventoryPage(UUID uuid, int pageNumber);
-
-    // Charge toutes les pages ET l'équipement pour un joueur
-    CompletableFuture<PlayerInventoryData> loadPlayerInventoriesAndEquipment(UUID uuid);
-
-    // Sauvegarde toutes les pages ET l'équipement d'un joueur
-    // (Peut-être renommer en savePlayerInventoryData)
-    CompletableFuture<Void> saveFullPlayerInventoryData(PlayerInventoryData data);
-
-    void saveFullPlayerInventoryDataBlocking(PlayerInventoryData data) throws Exception;
-
-
-    CompletableFuture<Void> deleteAllPlayerData(UUID uuid); // Doit supprimer les pages et l'équipement
+    /** Oublie ce que la base contient pour ce joueur (après sa dernière sauvegarde de session). */
+    void forget(UUID uuid);
 }

@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
 
 public class MessageUtil {
 
-    private static String pluginPrefix = ChatColor.translateAlternateColorCodes('&', "&8[&bSHInvPages&8] &r");
+    private static String pluginPrefix = "";
     // Pattern for hex color codes like &#RRGGBB
     private static final Pattern HEX_PATTERN = Pattern.compile("&#([A-Fa-f0-9]{6})");
 
