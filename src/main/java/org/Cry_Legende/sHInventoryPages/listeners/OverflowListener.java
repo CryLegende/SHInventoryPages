@@ -62,8 +62,9 @@ public final class OverflowListener implements Listener {
     }
 
     /**
-     * Relevés d'un monde pour le tick en cours. Un état par monde : avec les ticks de mondes en parallèle (DivineMC),
-     * chaque monde traite ses événements sur son propre fil, et tous les relevés sont de toute façon comparés par monde.
+     * Relevés du tick en cours, un jeu par fil. Avec les ticks de mondes en parallèle et le tick des chunks par régions
+     * (DivineMC), chaque monde, voire chaque région, traite ses événements sur son propre fil : une mort et les objets
+     * qui en tombent passent par le même fil, l'un après l'autre. Les relevés restent comparés par monde.
      */
     private static final class WorldRecords {
         final List<BreakRecord> breaks = new ArrayList<>();
@@ -71,7 +72,7 @@ public final class OverflowListener implements Listener {
         int tick = Integer.MIN_VALUE;
     }
 
-    private final Map<UUID, WorldRecords> records = new ConcurrentHashMap<>();
+    private final ThreadLocal<WorldRecords> records = ThreadLocal.withInitial(WorldRecords::new);
 
     public OverflowListener(SHInventoryPages plugin) {
         this.manager = plugin.getInventoryManager();
@@ -79,7 +80,7 @@ public final class OverflowListener implements Listener {
 
     /** Les relevés ne valent que pour le tick en cours : les objets apparaissent dans le même tick que leur cause. */
     private WorldRecords resetIfNewTick(World world) {
-        WorldRecords r = records.computeIfAbsent(world.getUID(), id -> new WorldRecords());
+        WorldRecords r = records.get();
         int now = Bukkit.getCurrentTick();
         if (r.tick != now) {
             r.breaks.clear();
@@ -89,10 +90,10 @@ public final class OverflowListener implements Listener {
         return r;
     }
 
-    /** Relevés du tick en cours pour ce monde, ou null s'il n'y en a pas. */
+    /** Relevés du tick en cours sur ce fil, ou null s'il n'y en a pas. */
     private WorldRecords validRecords(World world) {
-        WorldRecords r = records.get(world.getUID());
-        return r != null && r.tick == Bukkit.getCurrentTick() ? r : null;
+        WorldRecords r = records.get();
+        return r.tick == Bukkit.getCurrentTick() ? r : null;
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
