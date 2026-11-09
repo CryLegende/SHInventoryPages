@@ -84,12 +84,13 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     private final Map<UUID, CompletableFuture<?>> dbQueues = new ConcurrentHashMap<>();
     private final Map<UUID, Object> loadTokens = new ConcurrentHashMap<>();
 
-    // Thread principal uniquement
-    private final Set<UUID> deferredSaves = new HashSet<>();
-    private final Map<UUID, Integer> lastSwitchTick = new HashMap<>();
-    private final Map<UUID, Integer> lastStoredNotice = new HashMap<>();
-    private final Map<UUID, Integer> lastFullNotice = new HashMap<>();
-    private final Map<UUID, Deque<Reservation>> reservations = new HashMap<>();
+    // Concurrentes : avec les ticks de mondes en parallèle (DivineMC), ramassages et objets posés au sol arrivent sur le
+    // fil du monde du joueur. Les entrées d'un joueur ne sont touchées que par le fil de son monde.
+    private final Set<UUID> deferredSaves = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, Integer> lastSwitchTick = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> lastStoredNotice = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> lastFullNotice = new ConcurrentHashMap<>();
+    private final Map<UUID, Deque<Reservation>> reservations = new ConcurrentHashMap<>();
     /** Joueur dont l'inventaire porté est en train d'être remplacé par une autre page. */
     private UUID switching;
 
@@ -134,12 +135,12 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     /** Copies déjà gardées sur disque (jamais deux fichiers pour la même écriture). */
     private final Set<PlayerInventoryData> dumped = ConcurrentHashMap.newKeySet();
     /** Joueurs dont un enregistrement aligné (fichier joueur + base) est programmé. */
-    private final Set<UUID> alignedPending = new HashSet<>();
+    private final Set<UUID> alignedPending = ConcurrentHashMap.newKeySet();
     /** Tick du dernier enregistrement aligné de chaque joueur. */
-    private final Map<UUID, Integer> lastAlignedSave = new HashMap<>();
+    private final Map<UUID, Integer> lastAlignedSave = new ConcurrentHashMap<>();
     private static final int ALIGNED_SAVE_SPACING_TICKS = 20;
     /** Fichiers de secours repris à la connexion, retirés quand une écriture validée couvre leurs pages. */
-    private final Map<UUID, List<PendingDump>> pendingDumps = new HashMap<>();
+    private final Map<UUID, List<PendingDump>> pendingDumps = new ConcurrentHashMap<>();
     /** Écritures de dernier recours (fin de session, reprise de secours) pas encore terminées : attendues à l'arrêt. */
     private final Set<PendingSave> inFlightCritical = ConcurrentHashMap.newKeySet();
     /** Écritures validées dont le traitement (versions, fichiers de secours) n'a pas encore eu lieu : repris à l'arrêt. */

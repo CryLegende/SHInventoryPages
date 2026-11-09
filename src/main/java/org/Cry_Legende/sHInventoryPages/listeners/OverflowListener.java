@@ -22,7 +22,9 @@ import org.bukkit.event.entity.ItemSpawnEvent;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Débordement : un objet donné à un joueur dont l'inventaire porté est plein est rangé dans ses autres pages au
@@ -59,42 +61,54 @@ public final class OverflowListener implements Listener {
     private record LootSource(LootKind kind, Location location, double radiusSquared) {
     }
 
-    private final List<BreakRecord> breaks = new ArrayList<>();
-    private final List<LootSource> lootSources = new ArrayList<>();
-    private int recordsTick = Integer.MIN_VALUE;
+    /**
+     * Relevés d'un monde pour le tick en cours. Un état par monde : avec les ticks de mondes en parallèle (DivineMC),
+     * chaque monde traite ses événements sur son propre fil, et tous les relevés sont de toute façon comparés par monde.
+     */
+    private static final class WorldRecords {
+        final List<BreakRecord> breaks = new ArrayList<>();
+        final List<LootSource> lootSources = new ArrayList<>();
+        int tick = Integer.MIN_VALUE;
+    }
+
+    private final Map<UUID, WorldRecords> records = new ConcurrentHashMap<>();
 
     public OverflowListener(SHInventoryPages plugin) {
         this.manager = plugin.getInventoryManager();
     }
 
     /** Les relevés ne valent que pour le tick en cours : les objets apparaissent dans le même tick que leur cause. */
-    private void resetIfNewTick() {
+    private WorldRecords resetIfNewTick(World world) {
+        WorldRecords r = records.computeIfAbsent(world.getUID(), id -> new WorldRecords());
         int now = Bukkit.getCurrentTick();
-        if (recordsTick != now) {
-            breaks.clear();
-            lootSources.clear();
-            recordsTick = now;
+        if (r.tick != now) {
+            r.breaks.clear();
+            r.lootSources.clear();
+            r.tick = now;
         }
+        return r;
     }
 
-    private boolean recordsValid() {
-        return recordsTick == Bukkit.getCurrentTick();
+    /** Relevés du tick en cours pour ce monde, ou null s'il n'y en a pas. */
+    private WorldRecords validRecords(World world) {
+        WorldRecords r = records.get(world.getUID());
+        return r != null && r.tick == Bukkit.getCurrentTick() ? r : null;
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onBlockBreakStart(BlockBreakEvent event) {
         if (!manager.isOverflowEnabled()) return;
-        resetIfNewTick();
         Block block = event.getBlock();
-        breaks.add(new BreakRecord(block, block.getLocation().add(0.5, 0.5, 0.5), event.getPlayer().getUniqueId()));
+        resetIfNewTick(block.getWorld()).breaks.add(new BreakRecord(block, block.getLocation().add(0.5, 0.5, 0.5), event.getPlayer().getUniqueId()));
     }
 
     /** Une casse annulée plus tard (protection, autre plugin) ne désigne plus de destinataire. */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onBlockBreakEnd(BlockBreakEvent event) {
-        if (event.isCancelled() && recordsValid()) {
+        WorldRecords r;
+        if (event.isCancelled() && (r = validRecords(event.getBlock().getWorld())) != null) {
             UUID player = event.getPlayer().getUniqueId();
-            breaks.removeIf(record -> record.player().equals(player) && record.block().equals(event.getBlock()));
+            r.breaks.removeIf(record -> record.player().equals(player) && record.block().equals(event.getBlock()));
         }
     }
 
@@ -108,7 +122,7 @@ public final class OverflowListener implements Listener {
     /** Créatures et joueurs (PlayerDeathEvent passe aussi ici). */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onEntityDeathStart(EntityDeathEvent event) {
-        clearLoot(LootKind.DEATH);
+        clearLoot(LootKind.DEATH, event.getEntity().getWorld());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -118,7 +132,7 @@ public final class OverflowListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onDispenseStart(BlockDispenseEvent event) {
-        clearLoot(LootKind.DISPENSE);
+        clearLoot(LootKind.DISPENSE, event.getBlock().getWorld());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -128,7 +142,7 @@ public final class OverflowListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onEntityExplodeStart(EntityExplodeEvent event) {
-        clearLoot(LootKind.EXPLOSION);
+        clearLoot(LootKind.EXPLOSION, event.getLocation().getWorld());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -138,7 +152,7 @@ public final class OverflowListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onBlockExplodeStart(BlockExplodeEvent event) {
-        clearLoot(LootKind.EXPLOSION);
+        clearLoot(LootKind.EXPLOSION, event.getBlock().getWorld());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -146,14 +160,14 @@ public final class OverflowListener implements Listener {
         addLootSource(LootKind.EXPLOSION, event.getBlock().getLocation().add(0.5, 0.5, 0.5), manager.getExplosionRadius());
     }
 
-    private void clearLoot(LootKind kind) {
-        if (recordsValid()) lootSources.removeIf(source -> source.kind() == kind);
+    private void clearLoot(LootKind kind, World world) {
+        WorldRecords r = validRecords(world);
+        if (r != null) r.lootSources.removeIf(source -> source.kind() == kind);
     }
 
     private void addLootSource(LootKind kind, Location location, double radius) {
         if (!manager.isOverflowEnabled()) return;
-        resetIfNewTick();
-        lootSources.add(new LootSource(kind, location, radius * radius));
+        resetIfNewTick(location.getWorld()).lootSources.add(new LootSource(kind, location, radius * radius));
     }
 
     /**
@@ -191,8 +205,9 @@ public final class OverflowListener implements Listener {
     }
 
     private boolean isWorldLoot(Location location) {
-        if (!recordsValid()) return false;
-        for (LootSource source : lootSources) {
+        WorldRecords r = validRecords(location.getWorld());
+        if (r == null) return false;
+        for (LootSource source : r.lootSources) {
             if (source.location().getWorld() == location.getWorld()
                 && source.location().distanceSquared(location) <= source.radiusSquared()) {
                 return true;
@@ -204,10 +219,11 @@ public final class OverflowListener implements Listener {
     private Target findTarget(Item entity, Location location) {
         UUID owner = entity.getOwner();
         World world = location.getWorld();
-        if (recordsValid() && !breaks.isEmpty()) {
+        WorldRecords r = validRecords(world);
+        if (r != null && !r.breaks.isEmpty()) {
             BreakRecord closest = null;
             double closestDistance = BREAK_DROP_RADIUS_SQUARED;
-            for (BreakRecord record : breaks) {
+            for (BreakRecord record : r.breaks) {
                 if (record.center().getWorld() != world) continue;
                 double distance = record.center().distanceSquared(location);
                 if (distance <= closestDistance) {
