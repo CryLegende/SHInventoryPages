@@ -24,7 +24,7 @@ import java.util.logging.Level;
 /** /shinventorypages reload | saveall | info &lt;joueur&gt; */
 public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
 
-    private static final List<String> SUBCOMMANDS = List.of("reload", "saveall", "info", "recover");
+    private static final List<String> SUBCOMMANDS = List.of("reload", "saveall", "info", "recover", "history");
 
     private final SHInventoryPages plugin;
     private final ConfigManager config;
@@ -36,6 +36,11 @@ public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
 
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
+        // L'historique a sa propre permission : un modérateur peut le consulter sans les autres commandes
+        if (args.length > 0 && args[0].equalsIgnoreCase("history")) {
+            history(sender, label, args);
+            return true;
+        }
         if (!sender.hasPermission("shinventorypages.admin")) {
             MessageUtil.sendMessage(sender, config.getMessage("no_permission_command"));
             return true;
@@ -78,6 +83,31 @@ public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    /** /ship history <joueur> : copies de toutes les pages du joueur, connecté ou non. */
+    private void history(CommandSender sender, String label, String[] args) {
+        if (!sender.hasPermission("shinventorypages.history")) {
+            MessageUtil.sendMessage(sender, config.getMessage("no_permission_command"));
+            return;
+        }
+        if (!(sender instanceof Player staff)) {
+            MessageUtil.sendMessage(sender, config.getMessage("only_players"));
+            return;
+        }
+        if (args.length < 2) {
+            MessageUtil.sendMessage(sender, config.getMessage("command_usage", "%label%", label));
+            return;
+        }
+        Player online = Bukkit.getPlayerExact(args[1]);
+        // Jamais de recherche chez Mojang depuis le thread principal : seuls les joueurs déjà venus sont connus
+        org.bukkit.OfflinePlayer target = online != null ? online : Bukkit.getOfflinePlayerIfCached(args[1]);
+        if (target == null) {
+            MessageUtil.sendMessage(sender, config.getMessage("history_unknown_player", "%player%", args[1]));
+            return;
+        }
+        String name = target.getName() != null ? target.getName() : args[1];
+        plugin.getHistoryMenus().openList(staff, target.getUniqueId(), name, 0);
+    }
+
     private void info(CommandSender sender, String label, String[] args) {
         if (args.length < 2) {
             MessageUtil.sendMessage(sender, config.getMessage("command_usage", "%label%", label));
@@ -113,11 +143,17 @@ public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
     @Nullable
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
-        if (!sender.hasPermission("shinventorypages.admin")) return List.of();
+        boolean admin = sender.hasPermission("shinventorypages.admin");
+        boolean history = sender.hasPermission("shinventorypages.history");
+        if (!admin && !history) return List.of();
         if (args.length == 1) {
             String prefix = args[0].toLowerCase(Locale.ROOT);
-            return SUBCOMMANDS.stream().filter(s -> s.startsWith(prefix)).toList();
+            return SUBCOMMANDS.stream().filter(s -> admin || s.equals("history")).filter(s -> s.startsWith(prefix)).toList();
         }
+        if (args.length == 2 && args[0].equalsIgnoreCase("history")) {
+            return null; // noms des joueurs connectés
+        }
+        if (!admin) return List.of();
         if (args.length == 2 && args[0].equalsIgnoreCase("info")) {
             return null; // noms des joueurs connectés
         }

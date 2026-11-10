@@ -1,6 +1,7 @@
 package org.Cry_Legende.sHInventoryPages.database;
 
 import org.Cry_Legende.sHInventoryPages.SHInventoryPages;
+import org.Cry_Legende.sHInventoryPages.history.HistoryRecord;
 import org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData;
 import org.Cry_Legende.sHInventoryPages.util.ItemCodec;
 import org.bukkit.inventory.ItemStack;
@@ -66,6 +67,14 @@ public abstract class SqlDatabase implements DatabaseManager {
 
     /** Insère ou met à jour la seule colonne currentPage : paramètres uuid, currentPage. */
     protected abstract String upsertCurrentPageSql();
+
+    /** Création de la table shinventorypages_history, dans le dialecte de la base. */
+    protected abstract String createHistoryTableSql();
+
+    /** Création de l'index (uuid, reason, id) de shinventorypages_history, ou null s'il est créé avec la table. */
+    protected String createHistoryIndexSql() {
+        return null;
+    }
 
     @Override
     public PlayerInventoryData load(UUID uuid, int maxPossiblePages) throws Exception {
@@ -331,6 +340,125 @@ public abstract class SqlDatabase implements DatabaseManager {
                 ps.executeUpdate();
             }
             return null;
+        });
+    }
+
+    // ------------------------------------------------------------------ historique des pages
+
+    @Override
+    public boolean createHistoryTable() {
+        try {
+            withConnection(connection -> {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute(createHistoryTableSql());
+                    String index = createHistoryIndexSql();
+                    if (index != null) statement.execute(index);
+                }
+                return null;
+            });
+            return true;
+        } catch (SQLException e) {
+            plugin.getLogger().log(Level.SEVERE, "Table shinventorypages_history introuvable et impossible à créer : historique désactivé", e);
+            return false;
+        }
+    }
+
+    @Override
+    public long insertHistory(HistoryRecord record, int keep) throws Exception {
+        return withConnection(connection -> {
+            long id;
+            try (PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO shinventorypages_history (uuid, created, reason, current_page, max_pages, slots, items, hash, data)"
+                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
+                ps.setString(1, record.uuid().toString());
+                ps.setLong(2, record.created());
+                ps.setString(3, record.reason());
+                ps.setInt(4, record.currentPage());
+                ps.setInt(5, record.maxPages());
+                ps.setInt(6, record.slots());
+                ps.setInt(7, record.items());
+                ps.setString(8, record.hash());
+                ps.setString(9, record.data());
+                ps.executeUpdate();
+                try (ResultSet keys = ps.getGeneratedKeys()) {
+                    if (!keys.next()) throw new SQLException("Identifiant de la copie non rendu");
+                    id = keys.getLong(1);
+                }
+            }
+            // Seules les « keep » copies les plus récentes de ce moment restent. Table dérivée : MariaDB refuse de lire
+            // directement la table qu'il modifie ; moins de « keep » copies, la sous-requête est vide et rien ne part
+            try (PreparedStatement ps = connection.prepareStatement(
+                "DELETE FROM shinventorypages_history WHERE uuid = ? AND reason = ? AND id < (SELECT oldest FROM ("
+                    + "SELECT id AS oldest FROM shinventorypages_history WHERE uuid = ? AND reason = ?"
+                    + " ORDER BY id DESC LIMIT 1 OFFSET ?) kept)")) {
+                ps.setString(1, record.uuid().toString());
+                ps.setString(2, record.reason());
+                ps.setString(3, record.uuid().toString());
+                ps.setString(4, record.reason());
+                ps.setInt(5, Math.max(0, keep - 1));
+                ps.executeUpdate();
+            }
+            return id;
+        });
+    }
+
+    @Override
+    public String lastHistoryHash(UUID uuid) throws Exception {
+        return withConnection(connection -> {
+            try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT hash FROM shinventorypages_history WHERE uuid = ? ORDER BY id DESC LIMIT 1")) {
+                ps.setString(1, uuid.toString());
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? rs.getString(1) : null;
+                }
+            }
+        });
+    }
+
+    @Override
+    public List<HistoryRecord> listHistory(UUID uuid, int offset, int limit) throws Exception {
+        return withConnection(connection -> {
+            List<HistoryRecord> records = new ArrayList<>();
+            try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT id, created, reason, current_page, max_pages, slots, items, hash FROM shinventorypages_history"
+                    + " WHERE uuid = ? ORDER BY id DESC LIMIT ? OFFSET ?")) {
+                ps.setString(1, uuid.toString());
+                ps.setInt(2, limit);
+                ps.setInt(3, offset);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        records.add(new HistoryRecord(rs.getLong(1), uuid, rs.getLong(2), rs.getString(3), rs.getInt(4),
+                            rs.getInt(5), rs.getInt(6), rs.getInt(7), rs.getString(8), null));
+                    }
+                }
+            }
+            return records;
+        });
+    }
+
+    @Override
+    public HistoryRecord loadHistory(long id) throws Exception {
+        return withConnection(connection -> {
+            try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT uuid, created, reason, current_page, max_pages, slots, items, hash, data"
+                    + " FROM shinventorypages_history WHERE id = ?")) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) return null;
+                    return new HistoryRecord(id, UUID.fromString(rs.getString(1)), rs.getLong(2), rs.getString(3), rs.getInt(4),
+                        rs.getInt(5), rs.getInt(6), rs.getInt(7), rs.getString(8), rs.getString(9));
+                }
+            }
+        });
+    }
+
+    @Override
+    public int purgeHistory(long before) throws Exception {
+        return withConnection(connection -> {
+            try (PreparedStatement ps = connection.prepareStatement("DELETE FROM shinventorypages_history WHERE created < ?")) {
+                ps.setLong(1, before);
+                return ps.executeUpdate();
+            }
         });
     }
 }

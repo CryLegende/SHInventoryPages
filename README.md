@@ -17,6 +17,8 @@
 Pages d'inventaire supplémentaires, nombre selon la permission, sauvegardées en base de données.
 
 - **Débordement multi-piles** : un objet donné à un joueur dont l'inventaire porté est plein (`/give`, reste d'un don de plugin à ses pieds, bloc qu'il vient de casser) est découpé selon sa taille de pile (`max_stack_size` compris) et rangé dans les pages suivantes : piles partielles puis emplacements vides, page par page. Rien n'est jamais rangé deux fois ni perdu : ce qui ne tient nulle part reste au sol. Décidé avant WildStacker, qui n'empile que le reste ; les piles gérées par WildStacker (quantité cachée) ne sont jamais touchées.
+- **Ramassage vers les pages** : un objet au sol que le joueur touche alors que son inventaire porté n'en peut rien prendre (butin d'une créature, objet jeté, pile empilée par WildStacker) est rangé dans ses autres pages au lieu de rester au sol. Les règles de ramassage de l'île (SuperiorSkyblock2) et le drapeau `item-pickup` des régions WorldGuard s'appliquent comme au ramassage normal. WildStacker relit la quantité de la pile après le ramassage : rien n'est compté deux fois.
+- **Historique des pages** : une copie de toutes les pages est gardée en base aux mêmes moments qu'InventoryRollbackPlus pour l'inventaire porté (connexion, déconnexion, mort), toutes les 30 minutes si les pages ont changé, et avant toute opération sur toutes les pages (`/sell allpages` de SHSell, restauration). `/ship history <joueur>` les liste et affiche chaque page ; avec la permission de restauration, un clic copie un objet, shift + clic sur le bouton remplace la page du joueur (l'état d'avant est lui-même gardé).
 - **Sélecteur verrouillé** : aucun clic, glisser, touche, échange de main, jet, pose, cadre, artisanat ou entonnoir ne le déplace ; il porte le numéro de la page que représente l'inventaire porté (reprise exacte après un arrêt brutal ou une restauration d'inventaire).
 - **Stockage** : chaque page encodée par `ItemStack#serializeAsBytes` (NBT complet, composants et PDC conservés), anciennes lignes toujours lues ; seules les pages modifiées sont écrites, hors du thread principal, dans l'ordre par joueur. Base injoignable au départ d'un joueur : nouveaux essais puis copie dans `unsaved/`, reprise automatique à sa connexion suivante.
 
@@ -24,7 +26,7 @@ Utilisé sur : **Opale**.
 
 ## Dépendances
 
-- Optionnelles : `PlaceholderAPI`, `SHNetwork` et `HuskSync` (mode réseau)
+- Optionnelles : `PlaceholderAPI`, `WorldGuard` (drapeau `item-pickup` respecté par le ramassage vers les pages), `SHNetwork` et `HuskSync` (mode réseau)
 
 ## Mode réseau
 
@@ -51,6 +53,7 @@ Tables (créées au démarrage, ou à la main avec `sql/schema.sql`) : `shinvent
 | `addItems(player, items...)` | à la place d'`Inventory#addItem` : inventaire porté puis pages suivantes ; rend les restes |
 | `removeItems(player, items...)` / `countItems(player, item)` | sur l'inventaire porté et les pages accessibles |
 | `getFreeSpace(player, item)` | place restante sur toutes les pages |
+| `applyToStoredPages(player, operation, action)` | applique une opération faite pour l'inventaire porté (vente de tout, tri...) à chaque autre page, posée le temps d'un tick comme inventaire porté ; copie dans l'historique juste avant |
 | `blockPageSwitching` / `unblockPageSwitching` | fige les pages (parcours, mini-jeux) |
 | `PlayerPageSwitchEvent` / `PlayerItemsStoredEvent` | changement de page (annulable sauf forcé), objets rangés dans une page |
 
@@ -62,6 +65,7 @@ Tables (créées au démarrage, ou à la main avec `sql/schema.sql`) : `shinvent
 | `/shinventorypages saveall` | `/ship` | Écrit les pages de tous les joueurs. | `shinventorypages.admin` |
 | `/shinventorypages info <joueur>` | `/ship` | Pages d'un joueur : contenu, pages cachées et illisibles. | `shinventorypages.admin` |
 | `/shinventorypages recover <fichier> [force]` | `/ship` | Réimporte un fichier de `unsaved/` (joueur hors ligne). Mode réseau : refuse un fichier d'une session dépassée par un autre serveur, sauf `force`. | `shinventorypages.admin` |
+| `/shinventorypages history <joueur>` | `/ship` | Historique de toutes les pages d'un joueur, connecté ou non. | `shinventorypages.history` |
 
 ## Permissions
 
@@ -69,6 +73,8 @@ Tables (créées au démarrage, ou à la main avec `sql/schema.sql`) : `shinvent
 |---|---|---|
 | `shinventorypages.*` | Grants all permissions for SHInventoryPages. | `op` |
 | `shinventorypages.admin` | Allows access to admin commands like reload. | `op` |
+| `shinventorypages.history` | Opens the page history of a player (/ship history <player>). | `op` |
+| `shinventorypages.history.restore` | Copies items out of the page history and restores a page from it. | `op` |
 | `shinventorypages.pages.*` | Wildcard for page amount permissions (e.g., shinventorypages.pages.5). | `false` |
 | `shinventorypages.pages.<number>` | Grants access up to a specific number of pages. | `false` |
 
@@ -78,7 +84,8 @@ Fichiers par défaut repris du serveur (secrets remplacés par `CHANGE_ME`). Cli
 
 <pre>
 plugins/SHInventoryPages/
-└── <a href="src/main/resources/config.yml">config.yml</a>
+├── <a href="src/main/resources/config.yml">config.yml</a>
+└── <a href="src/main/resources/messages.yml">messages.yml</a>
 </pre>
 
 Tables du mode réseau : <a href="sql/schema.sql">sql/schema.sql</a>.

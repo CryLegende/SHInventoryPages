@@ -1,7 +1,10 @@
 package org.Cry_Legende.sHInventoryPages.database;
 
+import org.Cry_Legende.sHInventoryPages.history.HistoryRecord;
+
 import org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -61,4 +64,28 @@ public interface DatabaseManager {
     default void deleteDump(long id) throws Exception {
         throw new UnsupportedOperationException("Copies de secours en base : mode réseau seulement");
     }
+
+    // ------------------------------------------------------------------ historique des pages
+
+    /** Crée la table de l'historique si elle n'existe pas. */
+    boolean createHistoryTable();
+
+    /**
+     * Ajoute une copie des pages d'un joueur, puis ne garde que les {@code keep} plus récentes de ce moment.
+     *
+     * @return identifiant de la copie
+     */
+    long insertHistory(HistoryRecord record, int keep) throws Exception;
+
+    /** Empreinte de la dernière copie du joueur, ou null s'il n'en a aucune. */
+    String lastHistoryHash(UUID uuid) throws Exception;
+
+    /** Copies d'un joueur, de la plus récente à la plus ancienne, sans leurs objets. */
+    List<HistoryRecord> listHistory(UUID uuid, int offset, int limit) throws Exception;
+
+    /** Une copie complète, ou null si elle n'existe plus. */
+    HistoryRecord loadHistory(long id) throws Exception;
+
+    /** Supprime les copies créées avant {@code before} (ms). */
+    int purgeHistory(long before) throws Exception;
 }

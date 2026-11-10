@@ -103,6 +103,25 @@ public class MySQLManager extends SqlDatabase {
     }
 
     @Override
+    protected String createHistoryTableSql() {
+        return "CREATE TABLE IF NOT EXISTS `shinventorypages_history` ("
+            + "`id` BIGINT NOT NULL AUTO_INCREMENT,"
+            + "`uuid` VARCHAR(36) NOT NULL,"
+            + "`created` BIGINT NOT NULL,"
+            + "`reason` VARCHAR(16) NOT NULL,"
+            + "`current_page` INT NOT NULL,"
+            + "`max_pages` INT NOT NULL,"
+            + "`slots` INT NOT NULL,"
+            + "`items` INT NOT NULL,"
+            + "`hash` CHAR(64) NOT NULL,"
+            + "`data` LONGTEXT NOT NULL,"
+            + "PRIMARY KEY(`id`),"
+            + "KEY `idx_uuid_reason` (`uuid`, `reason`, `id`),"
+            + "KEY `idx_created` (`created`)"
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+    }
+
+    @Override
     public boolean createTables() {
         String pages = "CREATE TABLE IF NOT EXISTS `player_inventory_pages` ("
             + "`uuid` VARCHAR(36) NOT NULL,"

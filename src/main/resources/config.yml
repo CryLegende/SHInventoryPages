@@ -2,13 +2,19 @@
 #            SHInventoryPages - Configuration        #
 #----------------------------------------------------#
 # Pages d'inventaire supplémentaires par joueur, nombre selon la permission shinventorypages.pages.<n>, rangées en
-# base de données ; débordement des objets donnés à un joueur à inventaire plein vers ses autres pages.
+# base de données ; débordement des objets donnés à un joueur à inventaire plein vers ses autres pages ; ramassage
+# vers les autres pages quand l'inventaire porté est plein ; historique de toutes les pages pour le staff.
 #
-# Commandes (alias /ship) : /shinventorypages reload | saveall | info <joueur> | recover <fichier> [force]
-# Permissions : shinventorypages.admin (commandes), shinventorypages.pages.<n> et shinventorypages.pages.* (pages).
+# Commandes (alias /ship) :
+#   /ship reload | saveall | info <joueur> | recover <fichier> [force]   (shinventorypages.admin)
+#   /ship history <joueur>   copies de toutes les pages du joueur (shinventorypages.history) ; avec
+#                            shinventorypages.history.restore : copie d'un objet, restauration d'une page
+# Permissions : shinventorypages.admin, shinventorypages.history, shinventorypages.history.restore,
+#               shinventorypages.pages.<n> et shinventorypages.pages.* (nombre de pages).
 #
-# Tout est rechargeable par /ship reload, sauf les sections database et reseau (redémarrage).
-# Couleurs : codes & et &#RRGGBB. Sons : nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click) ; "" = aucun son.
+# Les messages sont dans messages.yml. Tout est rechargeable par /ship reload, sauf les sections database et reseau
+# (redémarrage). Couleurs : codes & et &#RRGGBB. Sons : nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click) ;
+# "" = aucun son.
 
 database:
   # "mariadb", "mysql" ou "sqlite"
@@ -72,6 +78,10 @@ inventory:
 # Rien n'est rangé tant que les pages sont figées (monde interdit, parcours).
 overflow:
   enabled: true
+  # Ramassage vers les pages : un objet au sol que le joueur touche alors que son inventaire porté n'en peut rien
+  # prendre (butin d'une créature, objet jeté, pile empilée...) est rangé dans ses autres pages. Les règles de
+  # ramassage de l'île et le drapeau item-pickup des régions WorldGuard s'appliquent comme au ramassage normal.
+  pickup_into_pages: true
   # Objet destiné à un joueur (/give) : distance (blocs) de ses pieds ou de ses yeux
   capture_radius: 1.5
   # Reste d'un don posé par un plugin : distance horizontale (blocs) aux pieds du joueur
@@ -172,46 +182,32 @@ placeholders:
   # %shinventorypages_current_page% et %shinventorypages_max_pages%
   enabled: true
 
-messages:
-  # Préfixe ajouté devant chaque message (les messages ci-dessous portent déjà le leur)
-  prefix: ""
-
-  no_permission: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission de faire cela."
-  only_players: "&7&l« &c&lSH &8&l» &7Cette commande ne peut être exécutée que par des joueurs."
-  player_not_found: "&7&l« &c&lSH &8&l» &7Le joueur &c%player% &7n'est pas connecté ou ses pages ne sont pas chargées."
-
-  # /shinventorypages (%label% = commande tapée)
-  no_permission_command: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission d'utiliser cette commande."
-  command_usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/%label% <reload|saveall|info <joueur>|recover <fichier> [force]>"
-  recover_stale: "&7&l« &c&lSH &8&l» &7Le joueur s'est reconnecté depuis &c%file% &7: la base est plus récente. Ajoutez &cforce &7pour écraser."
-  # /ship recover (%file% = fichier de plugins/SHInventoryPages/unsaved/)
-  recover_not_found: "&7&l« &c&lSH &8&l» &7Fichier de secours &c%file% &7introuvable."
-  # Fichier d'une session que l'autre serveur a dépassée depuis (mode réseau) : refusé sans « force »
-  recover_superseded: "&7&l« &c&lSH &8&l» &7Le fichier &c%file% &7date d'une session dépassée par un autre serveur : ses pages sont plus anciennes que celles de la base. Ajoutez &cforce &7pour écraser."
-  recover_player_online: "&7&l« &c&lSH &8&l» &7Le joueur doit être &chors ligne &7pour réimporter ses pages."
-  recover_done: "&7&l« &a&lSH &8&l» &7Pages de &a%file% &7réimportées en base."
-  recover_failed: "&7&l« &c&lSH &8&l» &7Réimport de &c%file% &7échoué. &cVérifiez la console&7."
-  reload_success: "&7&l« &a&lSH &8&l» &7La configuration a été rechargée &aavec succès&7."
-  reload_fail: "&7&l« &c&lSH &8&l» &7Une erreur est survenue lors du rechargement de la configuration. &cVérifiez la console&7."
-  save_all_started: "&7&l« &e&lSH &8&l» &7Sauvegarde des pages de tous les joueurs..."
-  save_all_finished: "&7&l« &a&lSH &8&l» &7Pages de tous les joueurs &asauvegardées&7."
-  save_all_failed: "&7&l« &c&lSH &8&l» &7Certaines pages n'ont pas pu être sauvegardées. &cVérifiez la console&7."
-  info_header: "&7&l« &e&lSH &8&l» &7Pages de &e%player% &7: page portée &e%current_page%&7/&e%max_pages%"
-  # %page%, %slots% (emplacements occupés), %items% (objets)
-  info_page_line: "&8 - &7Page &e%page% &8: &e%slots%&7/36 emplacements, &e%items% &7objets"
-  info_hidden_page_line: "&8 - &7Page &c%page% &8(&ccachée, permission&8) : &e%slots%&7/36 emplacements, &e%items% &7objets"
-  # Page dont la ligne en base est illisible : verrouillée, jamais réécrite (voir la console)
-  info_locked_page_line: "&8 - &7Page &4%page% &8(&4illisible, verrouillée&8)"
-
-  # Inventaire
-  cant_switch_here: "&7&l« &c&lSH &8&l» &7Vous ne pouvez pas changer de page d'inventaire dans cette zone."
-  cant_drop_switcher: "&7&l« &c&lSH &8&l» &7Vous ne pouvez pas jeter l'objet de changement de page !"
-  data_loading: "&7&l« &e&lSH &8&l» &7Vos pages d'inventaire sont en cours de chargement, patientez un instant."
-  # Objets rangés dans une autre page (%amount% objets, à partir de la page %page%)
-  item_sent_to_next_page: "&7&l« &e&lSH &8&l» &7Inventaire plein : &e%amount% &7objet(s) rangé(s) en page &e%page%&7."
-  all_pages_full: "&7&l« &c&lSH &8&l» &7Toutes vos pages d'inventaire sont &cpleines &7: des objets sont restés au sol."
-  max_pages_updated: "&7&l« &a&lSH &8&l» &7Votre nombre maximum de pages a été mis à jour à &a%max_pages%&7."
-  # Déconnexion quand les pages n'ont pas pu être lues (la base est protégée de tout écrasement)
-  load_failed_kick: "&cVos pages d'inventaire n'ont pas pu être chargées.\n&7Reconnectez-vous dans un instant."
-  # Valeur des placeholders tant que les pages ne sont pas chargées
-  placeholder_loading: "..."
+# Historique des pages : une copie de toutes les pages d'un joueur (page portée comprise) est gardée en base (table
+# shinventorypages_history) aux mêmes moments qu'InventoryRollbackPlus pour l'inventaire porté, et avant toute opération
+# sur toutes les pages (vente de toutes les pages, restauration). Une copie dont la seule page remplie est la page
+# portée n'est pas gardée (InventoryRollbackPlus l'a déjà), ni une copie identique à la précédente du joueur
+# (connexion, déconnexion, périodique). Consultation : /ship history <joueur>.
+history:
+  enabled: true
+  # Copies gardées par joueur pour chaque moment (les plus récentes) ; 0 = aucune copie à ce moment
+  max_copies:
+    join: 18
+    quit: 18
+    death: 18
+    periodic: 24
+    operation: 18
+    restore: 18
+  # Copie des joueurs connectés toutes les N minutes (0 = jamais), seulement si leurs pages ont changé
+  periodic_minutes: 30
+  # Copies plus anciennes supprimées (jours)
+  retention_days: 14
+  # Date affichée dans les menus
+  date_format: "dd/MM/yyyy HH:mm:ss"
+  # Objet de chaque copie dans la liste, selon son moment
+  icons:
+    join: "OAK_DOOR"
+    quit: "IRON_DOOR"
+    death: "SKELETON_SKULL"
+    periodic: "CLOCK"
+    operation: "GOLD_INGOT"
+    restore: "ENDER_CHEST"

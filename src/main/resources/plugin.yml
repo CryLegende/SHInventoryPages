@@ -5,13 +5,13 @@ api-version: '1.21'
 author: Cry_Legende
 # SHNetwork et HuskSync sont facultatifs : sans eux, rien ne change (serveur seul). Avec eux, les pages se partagent
 # entre serveurs (voir la section reseau de config.yml).
-softdepend: [PlaceholderAPI, SHNetwork, HuskSync]
+softdepend: [PlaceholderAPI, SHNetwork, HuskSync, WorldGuard]
 
 commands:
   shinventorypages:
     description: Main command for SHInventoryPages.
-    usage: /shinventorypages <reload|saveall|info <joueur>|recover <fichier> [force]>
-    permission: shinventorypages.admin
+    usage: /shinventorypages <reload|saveall|info <joueur>|recover <fichier> [force]|history <joueur>>
+    permission: shinventorypages.admin;shinventorypages.history
     aliases: [ship]
 
 permissions:
@@ -19,10 +19,20 @@ permissions:
     description: Grants all permissions for SHInventoryPages.
     children:
       shinventorypages.admin: true
+      shinventorypages.history: true
+      shinventorypages.history.restore: true
       shinventorypages.pages.*: true
   shinventorypages.admin:
     description: Allows access to admin commands like reload.
     default: op
+  shinventorypages.history:
+    description: Opens the page history of a player (/ship history <player>).
+    default: op
+  shinventorypages.history.restore:
+    description: Copies items out of the page history and restores a page from it.
+    default: op
+    children:
+      shinventorypages.history: true
   shinventorypages.pages.*:
     description: Wildcard for page amount permissions (e.g., shinventorypages.pages.5).
     default: false # Ne pas donner par défaut

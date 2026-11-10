@@ -1,54 +1,68 @@
 package org.Cry_Legende.sHInventoryPages.util;
 
-import net.md_5.bungee.api.ChatColor;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.command.CommandSender;
-import org.bukkit.entity.Player;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.ArrayList;
+import java.util.List;
 
-public class MessageUtil {
+/**
+ * Textes de la configuration et de messages.yml : codes & et &#RRGGBB. Les messages passent par
+ * {@link #colorize} (texte à codes §, prêt à recevoir des remplacements) puis sont envoyés en composants.
+ */
+public final class MessageUtil {
+
+    /** Codes & et couleurs &#RRGGBB, tels qu'écrits dans les fichiers. */
+    private static final LegacyComponentSerializer AMPERSAND = LegacyComponentSerializer.builder()
+        .character('&').hexCharacter('#').hexColors().build();
+    /** Codes §, couleurs hexadécimales comprises (format §x§r§r§g§g§b§b). */
+    private static final LegacyComponentSerializer SECTION = LegacyComponentSerializer.builder()
+        .character(LegacyComponentSerializer.SECTION_CHAR).hexColors().useUnusualXRepeatedCharacterHexFormat().build();
 
     private static String pluginPrefix = "";
-    // Pattern for hex color codes like &#RRGGBB
-    private static final Pattern HEX_PATTERN = Pattern.compile("&#([A-Fa-f0-9]{6})");
 
+    private MessageUtil() {
+    }
 
     public static void setPluginPrefix(String prefixFormat) {
         pluginPrefix = colorize(prefixFormat);
     }
 
+    /** Texte à codes & et &#RRGGBB vers texte à codes §. */
     public static String colorize(String message) {
-        if (message == null) return "";
+        if (message == null || message.isEmpty()) return "";
+        return SECTION.serialize(AMPERSAND.deserialize(message));
+    }
 
-        // Translate traditional '&' color codes
-        message = ChatColor.translateAlternateColorCodes('&', message);
+    /** Texte à codes § (message déjà colorisé) vers composant. */
+    public static Component component(String colorized) {
+        return SECTION.deserialize(colorized == null ? "" : colorized);
+    }
 
-        // Translate hex color codes &#RRGGBB
-        Matcher matcher = HEX_PATTERN.matcher(message);
-        StringBuffer buffer = new StringBuffer(message.length() + 4 * 8); // Pre-allocate buffer
-        while (matcher.find()) {
-            String group = matcher.group(1);
-            matcher.appendReplacement(buffer, ChatColor.of("#" + group).toString());
+    /** Nom ou ligne de description d'objet écrit avec des codes & : jamais en italique. */
+    public static Component itemText(String raw) {
+        return AMPERSAND.deserialize(raw == null ? "" : raw).decoration(TextDecoration.ITALIC, false);
+    }
+
+    public static List<Component> itemLines(List<String> raw) {
+        List<Component> lines = new ArrayList<>(raw.size());
+        for (String line : raw) lines.add(itemText(line));
+        return lines;
+    }
+
+    /** Comme {@link #sendMessage}, {@code placeholder} remplacé par un composant (nom d'objet traduit par le client). */
+    public static void sendMessage(CommandSender target, String message, String placeholder, Component value) {
+        if (target != null && message != null && !message.isEmpty()) {
+            target.sendMessage(component(pluginPrefix + message).replaceText(builder -> builder.matchLiteral(placeholder).replacement(value)));
         }
-        return matcher.appendTail(buffer).toString();
     }
 
-    public static String stripColor(String message) {
-        return ChatColor.stripColor(colorize(message)); // Ensure it's colorized first before stripping
-    }
-
+    /** Message déjà colorisé, précédé du préfixe du plugin ; un message vide n'est pas envoyé. */
     public static void sendMessage(CommandSender target, String message) {
         if (target != null && message != null && !message.isEmpty()) {
-            target.sendMessage(pluginPrefix + colorize(message));
+            target.sendMessage(component(pluginPrefix + message));
         }
     }
-
-    public static void sendMessageNoPrefix(CommandSender target, String message) {
-        if (target != null && message != null && !message.isEmpty()) {
-            target.sendMessage(colorize(message));
-        }
-    }
-
-    // You can add more methods here, e.g., for sending action bar messages, titles, etc.
 }

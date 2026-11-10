@@ -1,6 +1,5 @@
 package org.Cry_Legende.sHInventoryPages.inventory;
 
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.Cry_Legende.sHInventoryPages.SHInventoryPages;
 import org.Cry_Legende.sHInventoryPages.api.ISHInventoryPagesAPI;
 import org.Cry_Legende.sHInventoryPages.api.event.PlayerItemsStoredEvent;
@@ -10,7 +9,9 @@ import org.Cry_Legende.sHInventoryPages.database.DatabaseManager;
 import org.Cry_Legende.sHInventoryPages.database.NetworkDump;
 import org.Cry_Legende.sHInventoryPages.database.NetworkLoad;
 import org.Cry_Legende.sHInventoryPages.database.SessionSupersededException;
+import org.Cry_Legende.sHInventoryPages.history.PageHistory;
 import org.Cry_Legende.sHInventoryPages.network.NetworkSync;
+import org.Cry_Legende.sHInventoryPages.protection.PickupRules;
 import org.Cry_Legende.sHInventoryPages.util.ItemCodec;
 import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Bukkit;
@@ -52,6 +53,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.IntConsumer;
 import java.util.logging.Level;
 
 import static org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData.PAGE_SIZE;
@@ -96,8 +98,11 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     private final Map<UUID, Integer> lastStoredNotice = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> lastFullNotice = new ConcurrentHashMap<>();
     private final Map<UUID, Deque<Reservation>> reservations = new ConcurrentHashMap<>();
-    /** Joueur dont l'inventaire porté est en train d'être remplacé par une autre page. */
-    private UUID switching;
+    /**
+     * Joueurs dont l'inventaire porté est en train d'être remplacé par une autre page. Un ensemble par joueur : avec
+     * les mondes tiqués en parallèle, deux joueurs de mondes différents peuvent changer de page dans le même tick.
+     */
+    private final Set<UUID> switching = ConcurrentHashMap.newKeySet();
 
     private volatile int switcherSlot;
     private Material switcherMaterial;
@@ -133,6 +138,15 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     private volatile double feetRadius;
     private volatile Set<String> ignoredPlugins = Set.of();
     private volatile List<String> ignoredClasses = List.of();
+    private volatile boolean pickupIntoPages;
+    /** Règles de ramassage du plugin de protection installé (WorldGuard), lues par le ramassage vers les pages. */
+    private volatile PickupRules pickupRules = PickupRules.NONE;
+    /**
+     * Joueurs dont les pages n'ont rien pu prendre au dernier ramassage : tick jusqu'auquel on ne réessaie pas. Un
+     * joueur aux pages pleines qui reste sur des objets toucherait chacun d'eux à chaque tick.
+     */
+    private final Map<UUID, Integer> pickupBackoff = new ConcurrentHashMap<>();
+    private static final int PICKUP_BACKOFF_TICKS = 20;
 
     /** Arrêt en cours : les nouveaux essais d'écriture cessent et ce qui n'est pas écrit part sur disque. */
     private volatile boolean shuttingDown;
@@ -156,6 +170,12 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     /** Fichiers de secours écrits pendant une session, à inscrire avant toute validation postérieure. */
     private final java.util.concurrent.ConcurrentLinkedQueue<DumpRegistration> unregisteredDumps =
         new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /** Page portée mise de côté pendant une opération sur toutes les pages (applyToStoredPages). */
+    private final Map<UUID, ItemStack[]> swapWorn = new ConcurrentHashMap<>();
+
+    /** Historique des pages (copies gardées en base), null tant que le plugin ne l'a pas démarré. */
+    private volatile PageHistory history;
 
     // Mode réseau (null sur un serveur seul : rien ci-dessous ne sert alors)
     private volatile NetworkSync network;
@@ -279,6 +299,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         this.lootRadius = config.getOverflowLootRadius();
         this.explosionRadius = config.getOverflowExplosionRadius();
         this.feetRadius = config.getOverflowFeetRadius();
+        this.pickupIntoPages = config.isPickupIntoPages();
         Set<String> ignored = new HashSet<>();
         List<String> classes = new ArrayList<>();
         for (String entry : config.getOverflowIgnoredPlugins()) {
@@ -292,6 +313,39 @@ public class InventoryManager implements ISHInventoryPagesAPI {
 
     public double getFeetRadius() {
         return feetRadius;
+    }
+
+    public void setHistory(PageHistory history) {
+        this.history = history;
+    }
+
+    /** Copie de toutes les pages du joueur dans l'historique ; la page portée doit avoir été capturée juste avant. */
+    private void recordHistory(PlayerInventoryData data, PageHistory.Reason reason) {
+        PageHistory pageHistory = history;
+        if (pageHistory == null || !pageHistory.isEnabled()) return;
+        if (reason != PageHistory.Reason.RESTORE && !data.hasStoredContent()) return;
+        pageHistory.record(data, data.copyAllPages(), reason);
+    }
+
+    /** Copie périodique (history.periodic_minutes) des joueurs chargés ; une copie identique à la précédente n'est pas gardée. */
+    public void recordPeriodicHistory() {
+        int index = 0;
+        for (UUID uuid : new ArrayList<>(cache.keySet())) {
+            PlayerInventoryData known = cache.get(uuid);
+            if (known == null || !known.hasStoredContent()) continue;
+            // Étalées sur une seconde, comme la sauvegarde automatique
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                PlayerInventoryData data = cache.get(uuid);
+                Player player = Bukkit.getPlayer(uuid);
+                if (data == null || player == null || switching.contains(uuid) || player.isDead()) return;
+                captureLive(player, data);
+                recordHistory(data, PageHistory.Reason.PERIODIC);
+            }, index++ % 20);
+        }
+    }
+
+    public void setPickupRules(PickupRules rules) {
+        this.pickupRules = rules != null ? rules : PickupRules.NONE;
     }
 
     /** Plugin dont les objets posés au sol ne sont jamais des dons (configuration overflow.ignored_plugins). */
@@ -348,7 +402,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
                 loadTokens.remove(uuid, token);
                 plugin.getLogger().severe("CRITICAL: HuskSync n'a pas appliqué l'inventaire de " + player.getName()
                     + " dans le délai : pages non chargées, joueur déconnecté pour protéger les pages enregistrées.");
-                player.kick(LegacyComponentSerializer.legacySection().deserialize(config.getMessage("load_failed_kick")));
+                player.kick(MessageUtil.component(config.getMessage("load_failed_kick")));
                 return;
             } else if (arrival == NetworkSync.Arrival.UNCONFIRMED) {
                 plugin.getLogger().warning("Départ de " + player.getName() + " non confirmé par l'autre serveur (arrêt brutal ou sauvegarde"
@@ -405,7 +459,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
                         // est déconnecté ; la base et l'inventaire enregistré par Minecraft restent intacts
                         cache.remove(uuid);
                         plugin.getLogger().log(Level.SEVERE, "Error while applying loaded data for " + player.getName(), e);
-                        player.kick(LegacyComponentSerializer.legacySection().deserialize(config.getMessage("load_failed_kick")));
+                        player.kick(MessageUtil.component(config.getMessage("load_failed_kick")));
                     }
                     return;
                 }
@@ -417,7 +471,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
                     loadTokens.remove(uuid, token);
                     plugin.getLogger().severe("CRITICAL: Could not load inventory pages for " + player.getName()
                         + " after " + attempt + " attempts. Kicking to protect the stored pages.");
-                    player.kick(LegacyComponentSerializer.legacySection().deserialize(config.getMessage("load_failed_kick")));
+                    player.kick(MessageUtil.component(config.getMessage("load_failed_kick")));
                 }
             }, Bukkit.getScheduler().getMainThreadExecutor(plugin));
     }
@@ -468,6 +522,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         if (leftHidden) leftovers.addAll(leaveHiddenPage(player, data));
         updateSwitcherItem(player);
         storeOrDrop(player, leftovers, "objets rendus au chargement");
+        recordHistory(data, PageHistory.Reason.JOIN);
         // Changement forcé de page : fichier joueur et base ensemble
         if (leftHidden) alignedSave(player, data);
         // Pages reprises d'un fichier de secours : écrites tout de suite (réessayée comme une fin de session) ; chaque
@@ -509,7 +564,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     /** Fermeture d'un inventaire : la page courante est recapturée (copie toujours fraîche en mémoire). */
     public void captureIfLoaded(Player player) {
         PlayerInventoryData data = cache.get(player.getUniqueId());
-        if (data != null && switching == null && !player.isDead()) captureLive(player, data);
+        if (data != null && !switching.contains(player.getUniqueId()) && !player.isDead()) captureLive(player, data);
     }
 
     /**
@@ -527,7 +582,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         }
         if (target < 0) return new ArrayList<>();
         Bukkit.getPluginManager().callEvent(new PlayerPageSwitchEvent(player, hidden, target, true));
-        switching = player.getUniqueId();
+        switching.add(player.getUniqueId());
         try {
             data.setCurrentPage(target);
             List<ItemStack> displaced = applyCurrentPage(player, data);
@@ -536,7 +591,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
                 + data.getMaxPages() + ") ; page portée : " + target);
             return displaced;
         } finally {
-            switching = null;
+            switching.remove(player.getUniqueId());
         }
     }
 
@@ -569,8 +624,18 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         }
         loadTokens.remove(uuid);
         PlayerInventoryData data = cache.get(uuid);
+        ItemStack[] worn = swapWorn.remove(uuid);
+        if (worn != null) {
+            writeLive(player.getInventory(), worn);
+            switching.remove(uuid);
+        }
         // Capture avant de quitter le cache : un excédent corrigé peut encore être rangé dans les autres pages
-        if (data != null) captureLive(player, data);
+        if (data != null) {
+            captureLive(player, data);
+            recordHistory(data, PageHistory.Reason.QUIT);
+        }
+        PageHistory pageHistory = history;
+        if (pageHistory != null) pageHistory.forget(uuid);
         cache.remove(uuid);
         apiBlocks.remove(uuid);
         deferredSaves.remove(uuid);
@@ -580,6 +645,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         lastStoredNotice.remove(uuid);
         lastFullNotice.remove(uuid);
         reservations.remove(uuid);
+        pickupBackoff.remove(uuid);
         if (data == null) {
             // Chargement échoué ou pas encore fini : surtout ne rien écrire par-dessus la base
             forgetIfInactive(uuid);
@@ -655,7 +721,8 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         if (data == null || player == null || !player.isOnline()) return;
         PlayerInventory inv = player.getInventory();
         Integer stamp = readPageStamp(inv.getItem(switcherSlot));
-        if (stamp != null && stamp != data.getCurrentPage() && switching == null
+        boolean beingSwitched = switching.contains(player.getUniqueId());
+        if (stamp != null && stamp != data.getCurrentPage() && !beingSwitched
             && stamp >= 1 && stamp <= data.getMaxPages() && !data.isLocked(stamp)) {
             plugin.getLogger().warning("Inventaire de " + player.getName() + " remplacé par un autre plugin : il représente la page "
                 + stamp + " (page portée enregistrée : " + data.getCurrentPage() + ")");
@@ -686,7 +753,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             storeOrDrop(player, excess, "pile au-delà de sa taille corrigée dans l'inventaire");
             data.setPage(data.getCurrentPage(), readLive(inv));
         }
-        if (needsSwitcher && switching == null && !player.isDead()) updateSwitcherItem(player);
+        if (needsSwitcher && !beingSwitched && !player.isDead()) updateSwitcherItem(player);
     }
 
     /** Copie des emplacements 0 à 35 de l'inventaire porté ; l'emplacement du sélecteur est toujours vide. */
@@ -956,7 +1023,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             if (!ref.isRow()) retire(ref, ".superseded", uuid);
             return;
         }
-        decoded.forEach(data::restoreUnsavedPage);
+        decoded.forEach(data::replaceStoredPage);
         Map<Integer, Integer> restoredVersions = new HashMap<>();
         for (Integer page : decoded.keySet()) restoredVersions.put(page, data.versionOf(page));
         pendingDumps.computeIfAbsent(uuid, k -> new ArrayList<>()).add(new PendingDump(ref, restoredVersions));
@@ -1056,7 +1123,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             // La page courante du fichier est celle que l'inventaire porté (fichier joueur) représente : elle seule
             // est sautée ; la page courante enregistrée en base peut être périmée et ne protège rien
             data.setLoadedCurrentPage(yaml.getInt("current_page", data.getCurrentPage()));
-            readUnsavedFile(file, true).forEach(data::restoreUnsavedPage);
+            readUnsavedFile(file, true).forEach(data::replaceStoredPage);
             PlayerInventoryData snapshot = data.snapshot();
             snapshot.setEpoch(db.sessionEpoch(uuid));
             db.save(snapshot);
@@ -1142,6 +1209,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         for (Map.Entry<UUID, PlayerInventoryData> entry : cache.entrySet()) {
             Player player = Bukkit.getPlayer(entry.getKey());
             if (player != null) captureLive(player, entry.getValue());
+            if (shuttingDown) recordHistory(entry.getValue(), PageHistory.Reason.QUIT);
             pending.add(submitSave(entry.getValue(), false, false));
         }
         return pending;
@@ -1224,7 +1292,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             updateSwitcherItem(player);
             return;
         }
-        if (switching != null) return;
+        if (switching.contains(uuid)) return;
         if (!pagesOpen(player)) {
             playSound(player, failSound, soundVolume, soundPitch);
             MessageUtil.sendMessage(player, config.getMessage("cant_switch_here"));
@@ -1258,7 +1326,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         }
 
         List<ItemStack> leftovers;
-        switching = uuid;
+        switching.add(uuid);
         try {
             // Un écouteur a pu toucher l'inventaire : dernière capture sous verrou, sans effet de bord
             data.setPage(current, readLive(player.getInventory()));
@@ -1267,7 +1335,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             leftovers.addAll(applyCurrentPage(player, data));
             updateSwitcherItem(player);
         } finally {
-            switching = null;
+            switching.remove(uuid);
         }
         storeOrDrop(player, leftovers, "objets déplacés au changement de page");
         // Base et fichier du joueur écrits ensemble, tout de suite (au plus une fois par seconde, le reste regroupé) :
@@ -1416,9 +1484,9 @@ public class InventoryManager implements ISHInventoryPagesAPI {
      * figées.
      */
     private Placement place(Player player, ItemStack template, int amount, int liveBudget) {
-        if (amount <= 0 || switching != null) return Placement.NONE;
+        if (amount <= 0 || switching.contains(player.getUniqueId())) return Placement.NONE;
         int live = 0;
-        int room = Math.min(liveBudget, liveRoom(player, template));
+        int room = liveBudget <= 0 ? 0 : Math.min(liveBudget, liveRoom(player, template));
         if (room > 0) {
             PlayerInventory inv = player.getInventory();
             int toLive = Math.min(amount, room);
@@ -1479,7 +1547,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             && player.getGameMode() != GameMode.SPECTATOR
             && player.getCanPickupItems()
             && cache.containsKey(player.getUniqueId())
-            && switching == null
+            && !switching.contains(player.getUniqueId())
             && pagesOpen(player);
     }
 
@@ -1551,6 +1619,62 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         if (pending.isEmpty()) reservations.remove(player.getUniqueId());
     }
 
+    public boolean isPickupIntoPages() {
+        return overflowEnabled && pickupIntoPages;
+    }
+
+    /**
+     * Ramassage vers les pages : le joueur touche un objet au sol dont son inventaire porté ne peut rien prendre
+     * (PlayerAttemptPickupItemEvent, en MONITOR, après les règles de ramassage de l'île). L'objet est rangé dans ses
+     * autres pages, en entier ou en partie, et l'entité est réduite d'autant. Le ramassage vanilla qui suit l'événement
+     * n'ajoute alors rien à l'inventaire porté, et un empileur comme WildStacker relit la quantité de l'entité après
+     * l'événement pour tenir sa propre réserve : rien n'est compté deux fois.
+     */
+    public void pickUpIntoPages(Player player, Item entity, int remaining) {
+        UUID uuid = player.getUniqueId();
+        int now = Bukkit.getCurrentTick();
+        Integer until = pickupBackoff.get(uuid);
+        if (until != null) {
+            if (now < until) return;
+            pickupBackoff.remove(uuid, until);
+        }
+        PlayerInventoryData data = cache.get(uuid);
+        if (data == null || data.getMaxPages() <= 1) return;
+        // Entité déjà retirée par un autre plugin, ou pas encore ramassable : rien à faire
+        if (entity.isDead() || entity.getPickupDelay() > 0) return;
+        ItemStack stack = entity.getItemStack();
+        int amount = stack.getAmount();
+        // Une partie tient dans l'inventaire porté : le ramassage vanilla la prend, le reste revient au tick suivant
+        if (amount <= 0 || remaining < amount || isSwitcherItem(stack)) return;
+        // Vérifié sur l'inventaire lui-même : un plugin qui simule un ramassage peut annoncer un reste faux
+        PlayerInventory inv = player.getInventory();
+        if (SlotFiller.capacity(inv.getStorageContents(), stack, switcherSlot) + offHandRoom(inv, stack) > 0) return;
+        UUID owner = entity.getOwner();
+        if (owner != null && !owner.equals(uuid)) return;
+        if (!entity.canPlayerPickup() || !isEligibleRecipient(player, entity.getWorld())) return;
+        if (!pickupRules.canPickUp(player, entity.getLocation())) return;
+        Placement placement = place(player, stack, amount, 0);
+        int stored = placement.stored();
+        if (stored <= 0) {
+            pickupBackoff.put(uuid, now + PICKUP_BACKOFF_TICKS);
+            return;
+        }
+        if (stored >= amount) {
+            // Entité du monde : animation de ramassage vue par les joueurs proches (une copie temporaire n'en a pas)
+            if (entity.isValid()) player.playPickupItemAnimation(entity, amount);
+            entity.remove();
+        } else {
+            ItemStack rest = stack.clone();
+            rest.setAmount(amount - stored);
+            entity.setItemStack(rest);
+        }
+        playSound(player, overflowSound, overflowVolume, overflowPitch);
+        if (cooldownPassed(lastStoredNotice, uuid)) {
+            player.sendActionBar(MessageUtil.component(config.getMessage("item_picked_up_to_page",
+                "%amount%", String.valueOf(stored), "%page%", String.valueOf(placement.firstPage()))));
+        }
+    }
+
     public boolean isOverflowEnabled() {
         return overflowEnabled;
     }
@@ -1609,7 +1733,16 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         Player player = event.getEntity();
         stripInterfaceItems(event.getDrops());
         PlayerInventoryData data = cache.get(player.getUniqueId());
-        if (data == null || event.getKeepInventory()) return;
+        if (data == null) return;
+        // L'inventaire porté est encore plein pendant l'événement : copie de toutes les pages telles qu'avant la mort,
+        // lue sans rien corriger (les drops sont déjà calculés à partir de ces piles)
+        PageHistory pageHistory = history;
+        if (pageHistory != null && pageHistory.isEnabled()) {
+            Map<Integer, ItemStack[]> pages = data.copyAllPages();
+            pages.put(data.getCurrentPage(), readLive(player.getInventory()));
+            pageHistory.record(data, pages, PageHistory.Reason.DEATH);
+        }
+        if (event.getKeepInventory()) return;
         switch (deathMode) {
             case ALL -> {
                 if (!pagesOpen(player)) break;
@@ -1722,15 +1855,14 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         }
     }
 
-    @SuppressWarnings("deprecation") // noms et descriptions à codes couleur legacy, comme le reste de la config
     public ItemStack createSwitcherItem(int currentPage, int maxPages) {
         ItemStack item = new ItemStack(switcherMaterial);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            meta.setDisplayName(MessageUtil.colorize(format(switcherName, currentPage, maxPages)));
+            meta.displayName(MessageUtil.itemText(format(switcherName, currentPage, maxPages)));
             List<String> lore = new ArrayList<>(switcherLore.size());
-            for (String line : switcherLore) lore.add(MessageUtil.colorize(format(line, currentPage, maxPages)));
-            meta.setLore(lore);
+            for (String line : switcherLore) lore.add(format(line, currentPage, maxPages));
+            meta.lore(MessageUtil.itemLines(lore));
             if (enchantGlow) meta.setEnchantmentGlintOverride(true);
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_ENCHANTS);
             meta.getPersistentDataContainer().set(switcherKey, PersistentDataType.BYTE, (byte) 1);
@@ -1742,15 +1874,12 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         return item;
     }
 
-    @SuppressWarnings("deprecation")
     public ItemStack createBarrierItem(Integer page) {
         ItemStack item = new ItemStack(barrierMaterial);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            meta.setDisplayName(MessageUtil.colorize(barrierName));
-            List<String> lore = new ArrayList<>(barrierLore.size());
-            for (String line : barrierLore) lore.add(MessageUtil.colorize(line));
-            meta.setLore(lore);
+            meta.displayName(MessageUtil.itemText(barrierName));
+            meta.lore(MessageUtil.itemLines(barrierLore));
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
             meta.getPersistentDataContainer().set(switcherKey, PersistentDataType.BYTE, (byte) 1);
             if (page != null) meta.getPersistentDataContainer().set(pageKey, PersistentDataType.INTEGER, page);
@@ -1814,7 +1943,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
      */
     public void refreshMaxPages(Player player) {
         PlayerInventoryData data = cache.get(player.getUniqueId());
-        if (data == null || switching != null || player.isDead() || !pagesOpen(player)) return;
+        if (data == null || switching.contains(player.getUniqueId()) || player.isDead() || !pagesOpen(player)) return;
         int newMax = getMaxPagesForPlayer(player);
         if (newMax == data.getMaxPages()) return;
         captureLive(player, data);
@@ -1920,7 +2049,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     public @NotNull Map<Integer, ItemStack> removeItems(@NotNull Player player, @NotNull ItemStack... items) {
         requireMainThread();
         Map<Integer, ItemStack> leftovers = new HashMap<>();
-        boolean usable = !retired("removeItems") && usableTarget(player) && switching == null;
+        boolean usable = !retired("removeItems") && usableTarget(player) && !switching.contains(player.getUniqueId());
         PlayerInventoryData data = usable ? cache.get(player.getUniqueId()) : null;
         boolean pages = data != null && pagesOpen(player);
         PlayerInventory inv = player.getInventory();
@@ -1970,6 +2099,203 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             }
         }
         return leftovers;
+    }
+
+    @Override
+    public int applyToStoredPages(@NotNull Player player, @NotNull String operation, @NotNull IntConsumer action) {
+        requireMainThread();
+        if (retired("applyToStoredPages") || !usableTarget(player) || player.isDead()) return 0;
+        UUID uuid = player.getUniqueId();
+        PlayerInventoryData data = cache.get(uuid);
+        if (data == null || switching.contains(uuid) || !pagesOpen(player)) return 0;
+        captureLive(player, data);
+        int worn = data.getCurrentPage();
+        List<Integer> targets = new ArrayList<>();
+        for (int n = 1; n <= data.getMaxPages(); n++) {
+            if (n == worn || data.isLocked(n)) continue;
+            ItemStack[] page = data.getPage(n);
+            if (page != null && !isEmptyPage(page)) targets.add(n);
+        }
+        if (targets.isEmpty()) return 0;
+        recordHistory(data, PageHistory.Reason.OPERATION);
+        PlayerInventory inv = player.getInventory();
+        ItemStack[] wornContents = readLive(inv);
+        ItemStack switcher = inv.getItem(switcherSlot);
+        ItemStack savedSwitcher = switcher != null ? switcher.clone() : null;
+        List<ItemStack> displaced = new ArrayList<>();
+        int processed = 0;
+        RuntimeException failure = null;
+        switching.add(uuid);
+        // Une déconnexion pendant l'opération remet d'abord l'inventaire porté (unload)
+        swapWorn.put(uuid, wornContents);
+        try {
+            for (int n : targets) {
+                // Objet enregistré sur l'index du sélecteur (emplacement changé depuis) : il ne peut pas être posé, il est
+                // rangé ailleurs à la fin plutôt que perdu
+                ItemStack[] page = data.getPage(n);
+                ItemStack reserved = page[switcherSlot];
+                if (reserved != null && !reserved.isEmpty()) {
+                    if (!isSwitcherItem(reserved)) displaced.add(reserved.clone());
+                    data.clearSlot(n, switcherSlot);
+                }
+                writeLive(inv, data.getPage(n));
+                try {
+                    action.accept(n);
+                } catch (RuntimeException e) {
+                    failure = e;
+                } finally {
+                    // Ce que l'opération a posé sur l'emplacement du sélecteur est rangé ailleurs, et le sélecteur remis ;
+                    // un sélecteur qu'elle a déplacé ailleurs n'entre jamais dans la page
+                    ItemStack onSwitcher = inv.getItem(switcherSlot);
+                    if (onSwitcher != null && !onSwitcher.isEmpty() && !isSwitcherItem(onSwitcher)) displaced.add(onSwitcher.clone());
+                    inv.setItem(switcherSlot, savedSwitcher != null ? savedSwitcher.clone() : null);
+                    for (int i = 0; i < PAGE_SIZE; i++) {
+                        if (i != switcherSlot && isSwitcherItem(inv.getItem(i))) inv.setItem(i, null);
+                    }
+                    data.setPage(n, readLive(inv));
+                    processed++;
+                }
+                if (failure != null) break;
+            }
+        } finally {
+            writeLive(inv, wornContents);
+            swapWorn.remove(uuid);
+            switching.remove(uuid);
+            updateSwitcherItem(player);
+            player.updateInventory();
+            storeOrDrop(player, displaced, "objets posés sur l'emplacement du sélecteur par " + operation);
+            plugin.getLogger().info(operation + " : " + processed + " page(s) de " + player.getName() + " traitée(s)");
+            // Pages et fichier joueur écrits ensemble, même après une erreur de l'opération : un arrêt brutal ne peut pas
+            // opposer des pages déjà modifiées à un inventaire porté d'un autre moment
+            alignedSave(player, data);
+        }
+        if (failure != null) throw failure;
+        return processed;
+    }
+
+    private static boolean isEmptyPage(ItemStack[] page) {
+        for (ItemStack item : page) {
+            if (item != null && !item.isEmpty()) return false;
+        }
+        return true;
+    }
+
+    /** Pose une page dans les emplacements 0 à 35 de l'inventaire porté, sauf celui du sélecteur. */
+    private void writeLive(PlayerInventory inv, ItemStack[] contents) {
+        for (int i = 0; i < PAGE_SIZE; i++) {
+            if (i == switcherSlot) continue;
+            ItemStack item = contents != null && i < contents.length ? contents[i] : null;
+            inv.setItem(i, item != null && !item.isEmpty() ? item.clone() : null);
+        }
+    }
+
+    // =========================================================================
+    //  RESTAURATION D'UNE COPIE DE L'HISTORIQUE
+    // =========================================================================
+
+    /** Issue d'une restauration de page demandée par le staff. */
+    public enum RestoreResult {DONE, WORN_PAGE_OFFLINE, NETWORK_OFFLINE, LOADING, BUSY, FAILED}
+
+    /**
+     * Remplace la page {@code page} d'un joueur par une copie de l'historique. L'état actuel de toutes ses pages est
+     * d'abord gardé dans l'historique (restauration réversible). Joueur connecté ici : la page est remplacée dans
+     * ses données (dans son inventaire porté si c'est la page qu'il porte) puis écrite. Joueur hors ligne : la page
+     * est écrite en base, sauf la page qu'il portait (elle vit dans son fichier joueur Minecraft) ; refusé en mode
+     * réseau, où il peut être connecté sur un autre serveur. Thread principal ; le résultat arrive sur le thread
+     * principal.
+     */
+    public CompletableFuture<RestoreResult> restorePage(UUID uuid, int page, ItemStack[] contents) {
+        ItemStack[] copy = new ItemStack[PAGE_SIZE];
+        for (int i = 0; i < PAGE_SIZE && i < contents.length; i++) {
+            copy[i] = contents[i] != null && !contents[i].isEmpty() ? contents[i].clone() : null;
+        }
+        CompletableFuture<RestoreResult> result = new CompletableFuture<>();
+        // Le clic du staff arrive sur le fil de son monde (mondes tiqués en parallèle) : les pages et l'inventaire du
+        // joueur visé, peut-être dans un autre monde, ne sont touchés que depuis le thread principal du serveur
+        try {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                try {
+                    restorePageNow(uuid, page, copy, result);
+                } catch (RuntimeException e) {
+                    plugin.getLogger().log(Level.SEVERE, "Restauration de la page " + page + " de " + uuid + " échouée", e);
+                    result.complete(RestoreResult.FAILED);
+                }
+            });
+        } catch (RuntimeException e) {
+            result.complete(RestoreResult.FAILED);
+        }
+        return result;
+    }
+
+    private void restorePageNow(UUID uuid, int page, ItemStack[] copy, CompletableFuture<RestoreResult> result) {
+        Player player = Bukkit.getPlayer(uuid);
+        PlayerInventoryData data = cache.get(uuid);
+        if (player != null && data != null) {
+            // Pages figées (parcours, monde interdit) : l'inventaire porté appartient à un autre plugin, qui le remettra
+            if (switching.contains(uuid) || player.isDead() || !pagesOpen(player)) {
+                result.complete(RestoreResult.BUSY);
+                return;
+            }
+            captureLive(player, data);
+            recordHistory(data, PageHistory.Reason.RESTORE);
+            List<ItemStack> displaced = new ArrayList<>();
+            if (copy[switcherSlot] != null && !isSwitcherItem(copy[switcherSlot])) displaced.add(copy[switcherSlot]);
+            copy[switcherSlot] = null;
+            if (page == data.getCurrentPage()) {
+                writeLive(player.getInventory(), copy);
+                player.updateInventory();
+                captureLive(player, data);
+            } else {
+                data.replaceStoredPage(page, copy);
+            }
+            storeOrDrop(player, displaced, "restauration de la page " + page);
+            plugin.getLogger().warning("Page " + page + " de " + player.getName() + " restaurée depuis l'historique");
+            alignedSave(player, data);
+            result.complete(RestoreResult.DONE);
+            return;
+        }
+        if (player != null || loadTokens.containsKey(uuid)) {
+            result.complete(RestoreResult.LOADING);
+            return;
+        }
+        if (network != null) {
+            result.complete(RestoreResult.NETWORK_OFFLINE);
+            return;
+        }
+        int maxPossible = config.getMaxPossiblePages();
+        queueDb(uuid, () -> {
+            DatabaseManager db = plugin.getDatabaseManager();
+            PlayerInventoryData stored = db.load(uuid, maxPossible);
+            try {
+                PlayerInventoryData offline = stored != null ? stored : new PlayerInventoryData(uuid, maxPossible);
+                // Sans ligne en base, le joueur porte la page 1
+                if (offline.getCurrentPage() == page) return RestoreResult.WORN_PAGE_OFFLINE;
+                PageHistory pageHistory = history;
+                if (pageHistory != null && pageHistory.isEnabled()) {
+                    pageHistory.record(offline, offline.copyAllPages(), PageHistory.Reason.RESTORE);
+                }
+                offline.replaceStoredPage(page, copy);
+                db.save(offline.snapshot());
+                return RestoreResult.DONE;
+            } finally {
+                db.forget(uuid);
+            }
+        }).whenComplete((outcome, error) -> {
+            if (error != null) {
+                plugin.getLogger().log(Level.SEVERE, "Restauration de la page " + page + " de " + uuid + " échouée", error);
+                result.complete(RestoreResult.FAILED);
+            } else {
+                if (outcome == RestoreResult.DONE) {
+                    plugin.getLogger().warning("Page " + page + " de " + uuid + " (hors ligne) restaurée depuis l'historique");
+                }
+                result.complete(outcome);
+            }
+        });
+    }
+
+    @Override
+    public boolean arePagesOpen(@NotNull Player player) {
+        return !retired("arePagesOpen") && cache.containsKey(player.getUniqueId()) && pagesOpen(player);
     }
 
     @Override

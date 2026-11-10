@@ -86,6 +86,19 @@ public class SQLiteManager extends SqlDatabase {
     }
 
     @Override
+    protected String createHistoryTableSql() {
+        return "CREATE TABLE IF NOT EXISTS shinventorypages_history ("
+            + "id INTEGER PRIMARY KEY AUTOINCREMENT, uuid VARCHAR(36) NOT NULL, created BIGINT NOT NULL,"
+            + " reason VARCHAR(16) NOT NULL, current_page INTEGER NOT NULL, max_pages INTEGER NOT NULL,"
+            + " slots INTEGER NOT NULL, items INTEGER NOT NULL, hash CHAR(64) NOT NULL, data TEXT NOT NULL);";
+    }
+
+    @Override
+    protected String createHistoryIndexSql() {
+        return "CREATE INDEX IF NOT EXISTS idx_history_uuid_reason ON shinventorypages_history (uuid, reason, id);";
+    }
+
+    @Override
     public boolean createTables() {
         try {
             return withConnection(conn -> {

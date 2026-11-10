@@ -1,5 +1,8 @@
 package org.Cry_Legende.sHInventoryPages;
 
+import org.Cry_Legende.sHInventoryPages.history.HistoryMenus;
+import org.Cry_Legende.sHInventoryPages.history.PageHistory;
+import org.Cry_Legende.sHInventoryPages.protection.WorldGuardPickupRules;
 import org.Cry_Legende.sHInventoryPages.api.ISHInventoryPagesAPI;
 import org.Cry_Legende.sHInventoryPages.commands.CommandSHInventoryPages;
 import org.Cry_Legende.sHInventoryPages.config.ConfigManager;
@@ -14,7 +17,6 @@ import org.Cry_Legende.sHInventoryPages.network.NetworkLink;
 import org.Cry_Legende.sHInventoryPages.network.NetworkSync;
 import org.Cry_Legende.sHInventoryPages.network.ShNetworkLink;
 import org.Cry_Legende.sHInventoryPages.placeholders.SHPlaceholders;
-import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Player;
@@ -43,6 +45,10 @@ public final class SHInventoryPages extends JavaPlugin {
     private BukkitTask autoSaveTask;
     private BukkitTask permissionTask;
     private BukkitTask captureTask;
+    private BukkitTask historyTask;
+    private BukkitTask historyPurgeTask;
+    private PageHistory pageHistory;
+    private HistoryMenus historyMenus;
     private SHPlaceholders placeholders;
     private boolean fullyEnabled;
 
@@ -65,7 +71,11 @@ public final class SHInventoryPages extends JavaPlugin {
         this.databaseExecutor = Executors.newFixedThreadPool(configManager.getDatabaseThreads(), daemonThreads());
         try {
             this.inventoryManager = new InventoryManager(this, databaseExecutor);
+            this.pageHistory = new PageHistory(this);
+            pageHistory.start();
+            inventoryManager.setHistory(pageHistory);
             enableNetwork();
+            hookProtections();
             registerListeners();
             registerCommands();
         } catch (Exception e) {
@@ -110,6 +120,20 @@ public final class SHInventoryPages extends JavaPlugin {
         }
     }
 
+    /**
+     * Ramassage vers les pages : le drapeau item-pickup des régions WorldGuard est respecté, comme le fait le
+     * ramassage vanilla. La classe qui touche à WorldGuard n'est chargée que s'il est installé.
+     */
+    private void hookProtections() {
+        if (!Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) return;
+        try {
+            inventoryManager.setPickupRules(WorldGuardPickupRules.open());
+            getLogger().info("WorldGuard détecté : le ramassage vers les pages respecte le drapeau item-pickup des régions.");
+        } catch (Exception | LinkageError e) {
+            getLogger().log(Level.WARNING, "WorldGuard présent mais illisible : ramassage vers les pages sans règles de région : " + e);
+        }
+    }
+
     /** Enregistre ou retire l'extension PlaceholderAPI selon placeholders.enabled (démarrage et /ship reload). */
     private void syncPlaceholders() {
         boolean wanted = configManager.isPapiEnabled();
@@ -145,6 +169,8 @@ public final class SHInventoryPages extends JavaPlugin {
         if (fullyEnabled && inventoryManager != null) {
             // Joueurs encore connectés (arrêt du serveur, rechargement) : capture et écriture avant de fermer la base
             inventoryManager.shutdown(configManager.getShutdownSaveTimeout());
+            // Copies de déconnexion de l'arrêt écrites avant la fermeture de la base
+            pageHistory.shutdown(10);
         } else {
             getLogger().warning("Plugin was not fully enabled: player data save skipped to protect stored pages.");
         }
@@ -203,6 +229,8 @@ public final class SHInventoryPages extends JavaPlugin {
         pm.registerEvents(new PlayerListener(this), this);
         pm.registerEvents(new InventoryListener(this), this);
         pm.registerEvents(new OverflowListener(this), this);
+        this.historyMenus = new HistoryMenus(this);
+        pm.registerEvents(historyMenus, this);
     }
 
     private void registerCommands() {
@@ -230,15 +258,27 @@ public final class SHInventoryPages extends JavaPlugin {
         if (capture > 0) {
             captureTask = Bukkit.getScheduler().runTaskTimer(this, inventoryManager::captureAllLive, capture, capture);
         }
+        long periodic = configManager.getHistoryPeriodicMinutes() * 60L * 20L;
+        if (periodic > 0 && pageHistory.isEnabled()) {
+            historyTask = Bukkit.getScheduler().runTaskTimer(this, inventoryManager::recordPeriodicHistory, periodic, periodic);
+        }
+        if (pageHistory.isEnabled()) {
+            // Une heure entre deux nettoyages ; le premier peu après le démarrage
+            historyPurgeTask = Bukkit.getScheduler().runTaskTimer(this, pageHistory::purgeOld, 20L * 60L, 20L * 60L * 60L);
+        }
     }
 
     private void cancelTasks() {
         if (autoSaveTask != null) autoSaveTask.cancel();
         if (permissionTask != null) permissionTask.cancel();
         if (captureTask != null) captureTask.cancel();
+        if (historyTask != null) historyTask.cancel();
+        if (historyPurgeTask != null) historyPurgeTask.cancel();
         autoSaveTask = null;
         permissionTask = null;
         captureTask = null;
+        historyTask = null;
+        historyPurgeTask = null;
     }
 
     /** /ship reload : réglages, messages, objets et tâches. Le type et l'accès à la base demandent un redémarrage. */
@@ -247,8 +287,8 @@ public final class SHInventoryPages extends JavaPlugin {
         int oldSlot = inventoryManager.getSwitcherSlot();
         inventoryManager.saveAllNow();
         configManager.loadConfig();
-        MessageUtil.setPluginPrefix(configManager.getPluginPrefix());
         inventoryManager.updateSettingsFromConfig();
+        pageHistory.reload();
         if (inventoryManager.getSwitcherSlot() != oldSlot) {
             inventoryManager.moveSwitcherSlot(oldSlot);
         } else {
@@ -272,6 +312,14 @@ public final class SHInventoryPages extends JavaPlugin {
 
     public InventoryManager getInventoryManager() {
         return inventoryManager;
+    }
+
+    public PageHistory getPageHistory() {
+        return pageHistory;
+    }
+
+    public HistoryMenus getHistoryMenus() {
+        return historyMenus;
     }
 
     public boolean isFullyEnabled() {

@@ -5,6 +5,7 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
+import java.util.function.IntConsumer;
 
 /**
  * API de SHInventoryPages. Disponible par {@code SHInventoryPages#getApi()} ou par le ServicesManager de Bukkit
@@ -45,6 +46,28 @@ public interface ISHInventoryPagesAPI {
      * @return ce qui n'a pas pu être retiré, par index (contrat de {@code Inventory#removeItem})
      */
     @NotNull Map<Integer, ItemStack> removeItems(@NotNull Player player, @NotNull ItemStack... items);
+
+    /**
+     * Applique une opération faite pour l'inventaire porté (vente de tout l'inventaire, tri...) à chacune des autres
+     * pages accessibles du joueur, l'une après l'autre : la page est posée dans les emplacements 0 à 35 (sauf celui du
+     * sélecteur), {@code action} reçoit son numéro et peut modifier l'inventaire comme il le ferait pour l'inventaire
+     * porté, puis ce qui reste devient la page. L'armure et la main secondaire ne bougent pas. Tout se passe dans le
+     * même tick : l'inventaire porté est remis tel quel à la fin, même si {@code action} lève une exception. Une copie
+     * de toutes les pages est gardée dans l'historique juste avant.
+     *
+     * <p>Thread principal. Rien n'est fait si les pages ne sont pas chargées, sont figées (parcours, monde interdit)
+     * ou en train de changer. Les pages vides sont sautées. Les pages sont écrites en base juste après.</p>
+     *
+     * @param operation nom court de l'opération, gardé dans l'historique et dans la console
+     * @return nombre de pages traitées
+     */
+    int applyToStoredPages(@NotNull Player player, @NotNull String operation, @NotNull IntConsumer action);
+
+    /**
+     * Vrai si les pages du joueur sont chargées et ouvertes : faux dans un monde interdit ou pendant un blocage
+     * (parcours, arène), quand l'inventaire porté appartient à un autre plugin qui le remettra lui-même.
+     */
+    boolean arePagesOpen(@NotNull Player player);
 
     /** Vrai quand les pages du joueur sont chargées. */
     boolean isLoaded(@NotNull Player player);

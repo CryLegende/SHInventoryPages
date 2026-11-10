@@ -7,29 +7,69 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
 import org.bukkit.Sound;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 
-import java.util.ArrayList; // AJOUT
-import java.util.Collections;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.logging.Level;
-import java.util.stream.Collectors; // AJOUT
 
 public class ConfigManager {
 
     private final SHInventoryPages plugin;
     private FileConfiguration config;
+    private YamlConfiguration messages;
 
     public ConfigManager(SHInventoryPages plugin) {
         this.plugin = plugin;
     }
 
     public void loadConfig() {
-        plugin.saveDefaultConfig(); // Creates config.yml if it doesn't exist
-        plugin.reloadConfig();      // Reloads the config from disk
+        plugin.saveDefaultConfig();
+        plugin.reloadConfig();
         this.config = plugin.getConfig();
-        MessageUtil.setPluginPrefix(getPluginPrefix()); // Ensure prefix is set on load/reload
+        this.messages = loadMessages();
+        MessageUtil.setPluginPrefix(getPluginPrefix());
+    }
+
+    /**
+     * messages.yml, complété par les textes du jar qui y manquent. Les messages d'une ancienne config.yml (section
+     * messages) y sont repris une fois, à la création du fichier.
+     */
+    private YamlConfiguration loadMessages() {
+        File file = new File(plugin.getDataFolder(), "messages.yml");
+        if (!file.exists()) {
+            plugin.saveResource("messages.yml", false);
+            ConfigurationSection old = config.getConfigurationSection("messages");
+            if (old != null) {
+                YamlConfiguration created = YamlConfiguration.loadConfiguration(file);
+                for (String key : old.getKeys(false)) {
+                    if (old.isString(key)) created.set(key, old.getString(key));
+                }
+                try {
+                    created.save(file);
+                    plugin.getLogger().info("Messages repris de config.yml dans messages.yml (la section messages de config.yml ne sert plus).");
+                } catch (IOException e) {
+                    plugin.getLogger().log(Level.WARNING, "messages.yml non écrit : messages de config.yml gardés en mémoire", e);
+                    return created;
+                }
+            }
+        }
+        YamlConfiguration loaded = YamlConfiguration.loadConfiguration(file);
+        try (InputStream in = plugin.getResource("messages.yml")) {
+            if (in != null) {
+                loaded.setDefaults(YamlConfiguration.loadConfiguration(new InputStreamReader(in, StandardCharsets.UTF_8)));
+            }
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.WARNING, "messages.yml du jar illisible", e);
+        }
+        return loaded;
     }
 
     // --- Database ---
@@ -315,53 +355,73 @@ public class ConfigManager {
 
     // --- Messages ---
     public String getPluginPrefix() {
-        return config.getString("messages.prefix", "");
+        return messages.getString("prefix", "");
     }
 
     /**
-     * Gets a message string from the config, colorizes it, and replaces placeholders.
-     * Placeholders must be provided in pairs: placeholder, replacement.
-     * Example: getMessage("my_message", "%player%", player.getName(), "%value%", "123")
+     * Message de messages.yml colorisé (codes §), placeholders remplacés. Les remplacements vont par paires :
+     * getMessage("cle", "%player%", nom, "%page%", "2").
      */
     public String getMessage(String key, String... replacements) {
-        String message = config.getString("messages." + key);
+        String message = messages.getString(key);
         if (message == null) {
-            plugin.getLogger().warning("Missing message key in config.yml: messages." + key);
+            plugin.getLogger().warning("Message manquant dans messages.yml : " + key);
             return "Missing message: " + key;
         }
-        if (replacements.length > 0 && replacements.length % 2 == 0) {
-            for (int i = 0; i < replacements.length; i += 2) {
-                if (replacements[i] != null && replacements[i + 1] != null) {
-                    message = message.replace(replacements[i], replacements[i + 1]);
-                }
+        for (int i = 0; i + 1 < replacements.length; i += 2) {
+            if (replacements[i] != null && replacements[i + 1] != null) {
+                message = message.replace(replacements[i], replacements[i + 1]);
             }
         }
         return MessageUtil.colorize(message);
     }
 
-    // --- NOUVELLE MÉTHODE ---
-
-    /**
-     * Gets a list of strings from the config for the specified key.
-     * Returns an empty list if the key is not found or not a list.
-     * Automatically colorizes each line.
-     */
-    public List<String> getMessageList(String key) {
-        List<String> list = config.getStringList("messages." + key);
-        if (list == null || list.isEmpty()) {
-            // Ne pas logguer d'avertissement ici, car une liste vide est valide (par exemple pour un lore vide)
-            // plugin.getLogger().warning("Missing or empty message list key in config.yml: messages." + key);
-            return new ArrayList<>(); // Retourner une liste vide mutable
-        }
-        // Colorize each line
-        return list.stream()
-            .map(MessageUtil::colorize)
-            .collect(Collectors.toList());
+    /** Ligne de texte de messages.yml telle qu'écrite (codes &), pour un nom ou une description d'objet. */
+    public String getRawMessage(String key) {
+        // Sans valeur explicite : celle du messages.yml du jar quand le fichier du serveur n'a pas encore la clé
+        String text = messages.getString(key);
+        return text != null ? text : key;
     }
-    // ------------------------
 
-    // --- PlaceholderAPI ---
+    public List<String> getRawMessageList(String key) {
+        return messages.getStringList(key);
+    }
+
     public boolean isPapiEnabled() {
         return config.getBoolean("placeholders.enabled", true);
+    }
+
+    // --- Ramassage vers les pages ---
+    public boolean isPickupIntoPages() {
+        return config.getBoolean("overflow.pickup_into_pages", true);
+    }
+
+    // --- Historique des pages ---
+    public boolean isHistoryEnabled() {
+        return config.getBoolean("history.enabled", true);
+    }
+
+    /** Copies gardées par joueur pour un moment donné (join, quit, death, periodic, operation, restore) ; 0 = aucune. */
+    public int getHistoryMaxCopies(String moment) {
+        return Math.max(0, config.getInt("history.max_copies." + moment, 18));
+    }
+
+    public int getHistoryPeriodicMinutes() {
+        return Math.max(0, config.getInt("history.periodic_minutes", 30));
+    }
+
+    public int getHistoryRetentionDays() {
+        return Math.max(1, config.getInt("history.retention_days", 14));
+    }
+
+    /** Objet d'une copie dans la liste de l'historique, selon son moment. */
+    public String getHistoryIcon(String moment) {
+        // Sans valeur explicite : celle du config.yml du jar quand le fichier du serveur n'a pas encore la clé
+        String icon = config.getString("history.icons." + moment);
+        return icon != null ? icon : "PAPER";
+    }
+
+    public String getHistoryDateFormat() {
+        return config.getString("history.date_format", "dd/MM/yyyy HH:mm:ss");
     }
 }

@@ -1,0 +1,102 @@
+# Messages de SHInventoryPages. Couleurs : codes & et &#RRGGBB. Un message vide ("") n'est pas envoyé.
+
+# Préfixe ajouté devant chaque message (les messages ci-dessous portent déjà le leur)
+prefix: ""
+
+no_permission: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission de faire cela."
+only_players: "&7&l« &c&lSH &8&l» &7Cette commande ne peut être exécutée que par des joueurs."
+player_not_found: "&7&l« &c&lSH &8&l» &7Le joueur &c%player% &7n'est pas connecté ou ses pages ne sont pas chargées."
+
+# /shinventorypages (%label% = commande tapée)
+no_permission_command: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission d'utiliser cette commande."
+command_usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/%label% <reload|saveall|info <joueur>|recover <fichier> [force]|history <joueur>>"
+recover_stale: "&7&l« &c&lSH &8&l» &7Le joueur s'est reconnecté depuis &c%file% &7: la base est plus récente. Ajoutez &cforce &7pour écraser."
+# /ship recover (%file% = fichier de plugins/SHInventoryPages/unsaved/)
+recover_not_found: "&7&l« &c&lSH &8&l» &7Fichier de secours &c%file% &7introuvable."
+# Fichier d'une session que l'autre serveur a dépassée depuis (mode réseau) : refusé sans « force »
+recover_superseded: "&7&l« &c&lSH &8&l» &7Le fichier &c%file% &7date d'une session dépassée par un autre serveur : ses pages sont plus anciennes que celles de la base. Ajoutez &cforce &7pour écraser."
+recover_player_online: "&7&l« &c&lSH &8&l» &7Le joueur doit être &chors ligne &7pour réimporter ses pages."
+recover_done: "&7&l« &a&lSH &8&l» &7Pages de &a%file% &7réimportées en base."
+recover_failed: "&7&l« &c&lSH &8&l» &7Réimport de &c%file% &7échoué. &cVérifiez la console&7."
+reload_success: "&7&l« &a&lSH &8&l» &7La configuration a été rechargée &aavec succès&7."
+reload_fail: "&7&l« &c&lSH &8&l» &7Une erreur est survenue lors du rechargement de la configuration. &cVérifiez la console&7."
+save_all_started: "&7&l« &e&lSH &8&l» &7Sauvegarde des pages de tous les joueurs..."
+save_all_finished: "&7&l« &a&lSH &8&l» &7Pages de tous les joueurs &asauvegardées&7."
+save_all_failed: "&7&l« &c&lSH &8&l» &7Certaines pages n'ont pas pu être sauvegardées. &cVérifiez la console&7."
+info_header: "&7&l« &e&lSH &8&l» &7Pages de &e%player% &7: page portée &e%current_page%&7/&e%max_pages%"
+# %page%, %slots% (emplacements occupés), %items% (objets)
+info_page_line: "&8 - &7Page &e%page% &8: &e%slots%&7/36 emplacements, &e%items% &7objets"
+info_hidden_page_line: "&8 - &7Page &c%page% &8(&ccachée, permission&8) : &e%slots%&7/36 emplacements, &e%items% &7objets"
+# Page dont la ligne en base est illisible : verrouillée, jamais réécrite (voir la console)
+info_locked_page_line: "&8 - &7Page &4%page% &8(&4illisible, verrouillée&8)"
+
+# Inventaire
+cant_switch_here: "&7&l« &c&lSH &8&l» &7Vous ne pouvez pas changer de page d'inventaire dans cette zone."
+cant_drop_switcher: "&7&l« &c&lSH &8&l» &7Vous ne pouvez pas jeter l'objet de changement de page !"
+data_loading: "&7&l« &e&lSH &8&l» &7Vos pages d'inventaire sont en cours de chargement, patientez un instant."
+# Objets rangés dans une autre page (%amount% objets, à partir de la page %page%)
+item_sent_to_next_page: "&7&l« &e&lSH &8&l» &7Inventaire plein : &e%amount% &7objet(s) rangé(s) en page &e%page%&7."
+# Ramassage vers les pages, en barre d'action (%amount% objets rangés à partir de la page %page%)
+item_picked_up_to_page: "&7Inventaire plein : &e%amount% &7objet(s) rangé(s) en page &e%page%"
+all_pages_full: "&7&l« &c&lSH &8&l» &7Toutes vos pages d'inventaire sont &cpleines &7: des objets sont restés au sol."
+max_pages_updated: "&7&l« &a&lSH &8&l» &7Votre nombre maximum de pages a été mis à jour à &a%max_pages%&7."
+# Déconnexion quand les pages n'ont pas pu être lues (la base est protégée de tout écrasement)
+load_failed_kick: "&cVos pages d'inventaire n'ont pas pu être chargées.\n&7Reconnectez-vous dans un instant."
+# Valeur des placeholders tant que les pages ne sont pas chargées
+placeholder_loading: "..."
+
+# Historique des pages (/ship history <joueur>)
+history_disabled: "&7&l« &c&lSH &8&l» &7L'historique des pages est &cdésactivé&7."
+history_failed: "&7&l« &c&lSH &8&l» &7Lecture de l'historique &céchouée&7. &cVérifiez la console&7."
+history_unknown_player: "&7&l« &c&lSH &8&l» &7Le joueur &c%player% &7n'est jamais venu sur ce serveur."
+history_empty: "&7&l« &e&lSH &8&l» &7Aucune copie des pages de &e%player% &7dans l'historique."
+history_list_title: "&8Historique de %player% &7(%page%)"
+# %page% = page affichée, %date% = date de la copie
+history_view_title: "&8%player% &7· page %page% · %date%"
+history_entry_name: "&e%date%"
+# %reason%, %worn% (page portée), %max_pages%, %slots% (emplacements occupés), %items% (objets)
+history_entry_lore:
+  - "&7Moment : &e%reason%"
+  - "&7Page portée : &e%worn%&7/&e%max_pages%"
+  - "&7Contenu : &e%slots% &7emplacements, &e%items% &7objets"
+  - ""
+  - "&eClic &8» &7voir les pages"
+history_reason_join: "Connexion"
+history_reason_quit: "Déconnexion"
+history_reason_death: "Mort"
+history_reason_periodic: "Copie régulière"
+history_reason_operation: "Avant une vente de toutes les pages"
+history_reason_restore: "Avant une restauration"
+history_info_name: "&eHistorique de %player%"
+history_info_lore:
+  - "&7Copies de toutes les pages, de la plus"
+  - "&7récente à la plus ancienne."
+history_button_previous: "&a← Copies plus récentes"
+history_button_next: "&aCopies plus anciennes →"
+history_button_back: "&a← Retour à la liste"
+history_button_page_previous: "&a← Page précédente"
+history_button_page_next: "&aPage suivante →"
+history_page_name: "&ePage %page%"
+history_page_name_worn: "&ePage %page% &7(portée)"
+history_page_lore:
+  - "&7Copie du &e%date%"
+  - "&7Moment : &e%reason%"
+  - "&7Page portée à ce moment : &e%worn%"
+  - ""
+  - "&7Clic sur un objet &8» &7en recevoir une copie"
+history_button_restore: "&6Restaurer cette page"
+# %page%, %player%
+history_button_restore_lore:
+  - "&7Remplace la page &6%page% &7de &6%player%"
+  - "&7par celle de cette copie."
+  - "&7L'état actuel est gardé dans l'historique."
+  - ""
+  - "&6Shift + clic &8» &7restaurer"
+history_restore_confirm: "&7&l« &6&lSH &8&l» &7Faites &6shift + clic &7sur le bouton pour confirmer la restauration."
+history_restore_done: "&7&l« &a&lSH &8&l» &7Page &a%page% &7de &a%player% &7restaurée."
+history_restore_worn_offline: "&7&l« &c&lSH &8&l» &7La page &c%page% &7était portée par &c%player% &7à sa déconnexion : restaurez-la quand il est &cconnecté&7."
+history_restore_network_offline: "&7&l« &c&lSH &8&l» &c%player% &7n'est pas connecté sur ce serveur : restaurez la page quand il l'est."
+history_restore_busy: "&7&l« &c&lSH &8&l» &7Les pages de &c%player% &7sont en cours de chargement ou de changement, réessayez dans un instant."
+history_restore_failed: "&7&l« &c&lSH &8&l» &7Restauration &céchouée&7. &cVérifiez la console&7."
+history_copied: "&7&l« &a&lSH &8&l» &7Copie de &a%amount%x %item% &7ajoutée à votre inventaire."
+history_copy_no_room: "&7&l« &c&lSH &8&l» &7Votre inventaire est &cplein&7."

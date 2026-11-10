@@ -19,6 +19,7 @@ import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.ItemSpawnEvent;
+import org.bukkit.event.player.PlayerAttemptPickupItemEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -179,6 +180,18 @@ public final class OverflowListener implements Listener {
             var stack = event.getItem().getItemStack();
             manager.consumeReservation(player, stack, stack.getAmount());
         }
+    }
+
+    /**
+     * Objet au sol que le joueur touche alors que son inventaire porté n'en peut rien prendre (butin d'une créature,
+     * objet jeté, pile d'un empileur...) : rangé dans ses autres pages au lieu de rester au sol. MONITOR : les règles de
+     * ramassage de l'île ou d'un autre plugin ont déjà annulé l'événement si le joueur n'a pas le droit de le ramasser.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onAttemptPickup(PlayerAttemptPickupItemEvent event) {
+        // Cas courant (place libre) écarté avant toute lecture de l'objet : le ramassage vanilla s'en charge
+        if (event.getRemaining() <= 0 || !manager.isPickupIntoPages()) return;
+        manager.pickUpIntoPages(event.getPlayer(), event.getItem(), event.getRemaining());
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)

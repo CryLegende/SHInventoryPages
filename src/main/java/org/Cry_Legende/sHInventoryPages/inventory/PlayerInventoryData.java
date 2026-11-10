@@ -130,17 +130,6 @@ public class PlayerInventoryData {
     }
 
     /**
-     * Page reprise d'un fichier de secours (écriture en base échouée) : plus récente que la base, elle la remplace
-     * et sera écrite, même cachée ou verrouillée comme illisible.
-     */
-    public void restoreUnsavedPage(int pageNumber, ItemStack[] contents) {
-        if (pageNumber < 1 || pageNumber == currentPage) return;
-        lockedPages.remove(pageNumber);
-        pages.put(pageNumber, normalize(contents));
-        touch(pageNumber);
-    }
-
-    /**
      * Page lue en base : gardée même au-delà du maximum actuel, considérée comme déjà enregistrée, sauf si des
      * objets ont dû être retirés au-delà de ses 36 emplacements (la ligne doit alors être réécrite, sinon ils
      * seraient rendus à chaque connexion).
@@ -437,6 +426,43 @@ public class PlayerInventoryData {
             remaining -= part.getAmount();
         }
         return parts;
+    }
+
+    /** Vrai si une page autre que la page portée (cachée comprise) contient un objet. */
+    public boolean hasStoredContent() {
+        for (Map.Entry<Integer, ItemStack[]> entry : pages.entrySet()) {
+            if (entry.getKey() == currentPage) continue;
+            for (ItemStack item : entry.getValue()) {
+                if (item != null && !item.isEmpty()) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Copie indépendante de toutes les pages lisibles (cachées comprises), objets clonés : historique des pages. */
+    public Map<Integer, ItemStack[]> copyAllPages() {
+        Map<Integer, ItemStack[]> copy = new HashMap<>();
+        for (Map.Entry<Integer, ItemStack[]> entry : pages.entrySet()) {
+            ItemStack[] source = entry.getValue();
+            ItemStack[] items = new ItemStack[source.length];
+            for (int i = 0; i < source.length; i++) {
+                items[i] = source[i] != null && !source[i].isEmpty() ? source[i].clone() : null;
+            }
+            copy.put(entry.getKey(), items);
+        }
+        return copy;
+    }
+
+    /**
+     * Remplace une page autre que la page portée, même cachée ou verrouillée comme illisible : page reprise d'un
+     * fichier de secours (plus récente que la base) ou copie de l'historique restaurée. Elle sera écrite à la
+     * prochaine sauvegarde.
+     */
+    public void replaceStoredPage(int pageNumber, ItemStack[] contents) {
+        if (pageNumber < 1 || pageNumber == currentPage) return;
+        lockedPages.remove(pageNumber);
+        pages.put(pageNumber, normalize(contents));
+        touch(pageNumber);
     }
 
     /**
