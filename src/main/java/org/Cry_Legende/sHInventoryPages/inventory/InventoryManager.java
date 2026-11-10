@@ -6,6 +6,11 @@ import org.Cry_Legende.sHInventoryPages.api.ISHInventoryPagesAPI;
 import org.Cry_Legende.sHInventoryPages.api.event.PlayerItemsStoredEvent;
 import org.Cry_Legende.sHInventoryPages.api.event.PlayerPageSwitchEvent;
 import org.Cry_Legende.sHInventoryPages.config.ConfigManager;
+import org.Cry_Legende.sHInventoryPages.database.DatabaseManager;
+import org.Cry_Legende.sHInventoryPages.database.NetworkDump;
+import org.Cry_Legende.sHInventoryPages.database.NetworkLoad;
+import org.Cry_Legende.sHInventoryPages.database.SessionSupersededException;
+import org.Cry_Legende.sHInventoryPages.network.NetworkSync;
 import org.Cry_Legende.sHInventoryPages.util.ItemCodec;
 import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Bukkit;
@@ -145,12 +150,21 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     private final Set<PendingSave> inFlightCritical = ConcurrentHashMap.newKeySet();
     /** Écritures validées dont le traitement (versions, fichiers de secours) n'a pas encore eu lieu : repris à l'arrêt. */
     private final Set<Commit> unprocessedCommits = ConcurrentHashMap.newKeySet();
-    /** Fichier de secours écrit pour une copie (thread de la base vers thread principal). */
-    private final Map<PlayerInventoryData, File> dumpFiles = new ConcurrentHashMap<>();
+    /** Copie de secours écrite pour une copie (thread de la base vers thread principal). */
+    private final Map<PlayerInventoryData, DumpRef> dumpFiles = new ConcurrentHashMap<>();
 
     /** Fichiers de secours écrits pendant une session, à inscrire avant toute validation postérieure. */
     private final java.util.concurrent.ConcurrentLinkedQueue<DumpRegistration> unregisteredDumps =
         new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    // Mode réseau (null sur un serveur seul : rien ci-dessous ne sert alors)
+    private volatile NetworkSync network;
+    /** Joueurs dont le PlayerQuitEvent est en cours : le départ confié à SHNetwork attend le nôtre (MONITOR). */
+    private final Set<UUID> quitting = ConcurrentHashMap.newKeySet();
+    /** Écriture de départ déjà lancée, pas encore réclamée par SHNetwork. */
+    private final Map<UUID, CompletableFuture<Void>> departureResults = new ConcurrentHashMap<>();
+    /** Départ réclamé par SHNetwork avant que notre écouteur de départ soit passé. */
+    private final Map<UUID, CompletableFuture<Void>> departureWaiters = new ConcurrentHashMap<>();
 
     private record DumpRegistration(UUID uuid, PendingDump dump) {
     }
@@ -163,8 +177,34 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     private record PendingSave(PlayerInventoryData data, PlayerInventoryData snapshot, CompletableFuture<Void> future) {
     }
 
-    /** Fichier de secours repris, et version de chaque page restaurée qu'une écriture validée doit couvrir. */
-    private record PendingDump(File file, Map<Integer, Integer> versions) {
+    /** Copie de secours reprise, et version de chaque page restaurée qu'une écriture validée doit couvrir. */
+    private record PendingDump(DumpRef ref, Map<Integer, Integer> versions) {
+    }
+
+    /** Copie de secours : un fichier de unsaved/ ou, en mode réseau, une ligne de shinventorypages_unsaved. */
+    private record DumpRef(File file, long rowId) {
+        static DumpRef of(File file) {
+            return new DumpRef(file, -1L);
+        }
+
+        static DumpRef row(long id) {
+            return new DumpRef(null, id);
+        }
+
+        boolean isRow() {
+            return file == null;
+        }
+
+        String describe() {
+            return isRow() ? "ligne " + rowId + " de shinventorypages_unsaved" : file.getPath();
+        }
+    }
+
+    /** Copie de secours d'une session dépassée par un autre serveur : refusée sans « force ». */
+    private static final class SupersededDumpException extends Exception {
+        SupersededDumpException(String message) {
+            super(message);
+        }
     }
 
     /** Objets d'une mort : que deviennent les pages. */
@@ -272,8 +312,53 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     //  CHARGEMENT
     // =========================================================================
 
+    /** Active le mode réseau (SHNetwork présent, base partagée) : voir {@link NetworkSync}. */
+    public void setNetwork(NetworkSync network) {
+        this.network = network;
+    }
+
     public void loadPlayerData(Player player) {
+        Object token = new Object();
+        loadTokens.put(player.getUniqueId(), token);
+        beginLoad(player, token);
+    }
+
+    /**
+     * Connexion d'un joueur. Sur un serveur seul, les pages se chargent tout de suite. En mode réseau elles
+     * attendent que le serveur de départ ait validé les siennes en base (barrière de SHNetwork) et que HuskSync ait
+     * appliqué l'inventaire porté : lire l'un ou l'autre trop tôt chargerait des pages périmées ou ferait capturer
+     * l'inventaire local périmé comme page portée. Le joueur est « en chargement » dans l'intervalle.
+     */
+    public void joinPlayer(Player player) {
+        NetworkSync sync = network;
+        if (sync == null) {
+            loadPlayerData(player);
+            return;
+        }
         UUID uuid = player.getUniqueId();
+        departureResults.remove(uuid);
+        departureWaiters.remove(uuid);
+        Object token = new Object();
+        loadTokens.put(uuid, token);
+        sync.awaitArrival(player).whenCompleteAsync((arrival, error) -> {
+            if (!isCurrentLoad(player, token)) return;
+            if (error != null) {
+                plugin.getLogger().log(Level.WARNING, "Attente d'arrivée de " + player.getName() + " en échec, pages chargées quand même", error);
+            } else if (arrival == NetworkSync.Arrival.SYNC_FAILED) {
+                loadTokens.remove(uuid, token);
+                plugin.getLogger().severe("CRITICAL: HuskSync n'a pas appliqué l'inventaire de " + player.getName()
+                    + " dans le délai : pages non chargées, joueur déconnecté pour protéger les pages enregistrées.");
+                player.kick(LegacyComponentSerializer.legacySection().deserialize(config.getMessage("load_failed_kick")));
+                return;
+            } else if (arrival == NetworkSync.Arrival.UNCONFIRMED) {
+                plugin.getLogger().warning("Départ de " + player.getName() + " non confirmé par l'autre serveur (arrêt brutal ou sauvegarde"
+                    + " incomplète) : pages chargées depuis la base telles qu'elle les a.");
+            }
+            beginLoad(player, token);
+        }, Bukkit.getScheduler().getMainThreadExecutor(plugin));
+    }
+
+    private void beginLoad(Player player, Object token) {
         PlayerInventory inv = player.getInventory();
         // Avant de poser la barrière : le sélecteur enregistré avec l'inventaire dit quelle page il représente
         Integer livePage = readPageStamp(inv.getItem(switcherSlot));
@@ -284,8 +369,6 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             inv.setItem(i, null);
         }
         placeInSwitcherSlot(player, createBarrierItem(livePage));
-        Object token = new Object();
-        loadTokens.put(uuid, token);
         attemptLoad(player, 1, token, livePage);
     }
 
@@ -374,7 +457,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         }
 
         // Pages plus récentes que la base, gardées sur disque quand son dernier départ n'a pas pu être écrit
-        List<File> unsaved = applyUnsavedFiles(player, data);
+        List<DumpRef> unsaved = applyUnsaved(player, data, plugin.getDatabaseManager().takeNetworkLoad(uuid));
 
         cache.put(uuid, data);
         // L'inventaire porté fait foi pour la page courante, même devenue cachée
@@ -461,11 +544,27 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     //  DÉCONNEXION / SAUVEGARDE
     // =========================================================================
 
+    /** Début du départ d'un joueur (PlayerQuitEvent, priorité la plus basse) : SHNetwork attendra notre écriture. */
+    public void markQuitting(UUID uuid) {
+        if (network != null) quitting.add(uuid);
+    }
+
     public void unloadPlayerData(Player player) {
         UUID uuid = player.getUniqueId();
+        try {
+            unload(player, uuid);
+        } finally {
+            quitting.remove(uuid);
+            NetworkSync sync = network;
+            if (sync != null) sync.forget(uuid);
+        }
+    }
+
+    private void unload(Player player, UUID uuid) {
         Player current = Bukkit.getPlayer(uuid);
         if (current != null && current != player) {
             // Objet d'une session terminée : le cache et les blocages appartiennent à la nouvelle session
+            recordDeparture(uuid, CompletableFuture.completedFuture(null));
             return;
         }
         loadTokens.remove(uuid);
@@ -484,9 +583,65 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         if (data == null) {
             // Chargement échoué ou pas encore fini : surtout ne rien écrire par-dessus la base
             forgetIfInactive(uuid);
+            recordDeparture(uuid, CompletableFuture.completedFuture(null));
             return;
         }
-        saveSnapshot(data, true);
+        recordDeparture(uuid, saveSnapshot(data, true));
+    }
+
+    // =========================================================================
+    //  DÉPART EN MODE RÉSEAU
+    // =========================================================================
+
+    /**
+     * Garde l'écriture de fin de session pour SHNetwork, dans l'ordre où les deux écouteurs de départ passent : la
+     * tâche inscrite auprès de SHNetwork ne rend un futur terminé qu'une fois cette écriture validée en base.
+     */
+    private void recordDeparture(UUID uuid, CompletableFuture<Void> saved) {
+        if (network == null) return;
+        CompletableFuture<Void> waiting = departureWaiters.remove(uuid);
+        if (waiting != null) {
+            chain(saved, waiting);
+        } else {
+            departureResults.put(uuid, saved);
+        }
+    }
+
+    private static void chain(CompletableFuture<Void> from, CompletableFuture<Void> to) {
+        from.whenComplete((ignored, error) -> {
+            if (error != null) to.completeExceptionally(error);
+            else to.complete(null);
+        });
+    }
+
+    /**
+     * Tâche de départ confiée à SHNetwork (fil principal, pendant PlayerQuitEvent ou à l'arrêt du serveur). Le futur
+     * rendu ne se termine qu'une fois les pages du joueur validées en base : c'est lui qui fait attendre l'autre
+     * serveur, qui ne lit les pages qu'ensuite.
+     *
+     * <ul>
+     *   <li>Déconnexion : l'écriture est celle de {@link #unloadPlayerData} (priorité MONITOR, après les plugins qui
+     *       rendent un inventaire au départ) ; on attend la sienne plutôt que de capturer trop tôt.</li>
+     *   <li>Arrêt du serveur : aucune déconnexion n'a encore eu lieu, mais le plugin est encore actif. La capture et
+     *       l'écriture se font ici, sans quitter le cache (l'arrêt du plugin les complète).</li>
+     * </ul>
+     */
+    public CompletableFuture<Void> departureFuture(Player player) {
+        UUID uuid = player.getUniqueId();
+        CompletableFuture<Void> done = departureResults.remove(uuid);
+        if (done != null) return done;
+        if (quitting.contains(uuid)) {
+            CompletableFuture<Void> waiting = new CompletableFuture<>();
+            departureWaiters.put(uuid, waiting);
+            // Notre écouteur a pu passer entre-temps
+            done = departureResults.remove(uuid);
+            if (done != null && departureWaiters.remove(uuid, waiting)) chain(done, waiting);
+            return waiting;
+        }
+        PlayerInventoryData data = cache.get(uuid);
+        if (data == null) return CompletableFuture.completedFuture(null);
+        captureLive(player, data);
+        return submitSave(data, false, true).future();
     }
 
     /**
@@ -575,6 +730,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             }
         }
         PlayerInventoryData snapshot = data.snapshot();
+        snapshot.setEpoch(plugin.getDatabaseManager().sessionEpoch(uuid));
         Map<Integer, Integer> versions = snapshot.snapshotVersions();
         boolean critical = endOfSession || persistent;
         long retryMillis = shuttingDown ? 2_000L : critical ? endOfSessionRetryMillis : 0L;
@@ -589,7 +745,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         CompletableFuture<Void> future = raw.whenComplete((ignored, error) -> {
             if (error != null) {
                 plugin.getLogger().log(Level.SEVERE, "Failed to save inventory pages of " + uuid, error);
-                File dump = dumpFiles.remove(snapshot);
+                DumpRef dump = dumpFiles.remove(snapshot);
                 if (dump != null && !endOfSession) {
                     // Copie écrite pendant la session (reprise de secours en échec) : retirée, comme celles reprises à
                     // la connexion, dès qu'une écriture validée couvre ses pages. Conservée jusqu'à son inscription :
@@ -638,7 +794,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             for (Map.Entry<Integer, Integer> page : dump.versions().entrySet()) {
                 if (!data.isSavedAtLeast(page.getKey(), page.getValue())) return false;
             }
-            retire(dump.file(), ".applied");
+            retire(dump.ref(), ".applied", data.getUuid());
             return true;
         });
         if (dumps.isEmpty()) pendingDumps.remove(data.getUuid());
@@ -652,6 +808,11 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             try {
                 plugin.getDatabaseManager().save(snapshot);
                 return;
+            } catch (SessionSupersededException e) {
+                // Un autre serveur a repris le joueur depuis ce chargement : réessayer écraserait ses pages plus récentes.
+                // La copie est gardée à part, jamais reprise toute seule.
+                if (critical) writeUnsavedFile(snapshot, e);
+                throw e;
             } catch (Exception e) {
                 boolean outOfTime = System.currentTimeMillis() + pause > deadline;
                 if (outOfTime || shuttingDown) {
@@ -674,31 +835,53 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     }
 
     /**
-     * Dernier recours : les pages qui n'ont pas pu être écrites sont gardées sur disque. Elles sont reprises
-     * automatiquement à la prochaine connexion du joueur ({@link #applyUnsavedFiles}), ou par /ship recover.
+     * Dernier recours : les pages qui n'ont pas pu être écrites sont gardées. En mode réseau elles vont d'abord en
+     * base (table shinventorypages_unsaved), lisible par tous les serveurs ; sur un serveur seul, ou si la base ne
+     * répond pas, sur disque. Elles sont reprises automatiquement à la prochaine connexion du joueur
+     * ({@link #applyUnsaved}), ou par /ship recover pour un fichier. Une écriture refusée parce qu'un autre serveur a
+     * repris le joueur est gardée dans un fichier « .superseded », jamais reprise toute seule.
      */
     private void writeUnsavedFile(PlayerInventoryData snapshot, Exception cause) {
         if (snapshot.pagesView().isEmpty() || !dumped.add(snapshot)) return;
+        boolean superseded = cause instanceof SessionSupersededException;
         try {
-            File folder = unsavedFolder(plugin);
-            if (!folder.isDirectory() && !folder.mkdirs()) throw new IllegalStateException("cannot create " + folder);
-            String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS").format(new Date());
-            File file = new File(folder, snapshot.getUuid() + "-" + stamp + ".yml");
             YamlConfiguration yaml = new YamlConfiguration();
             yaml.set("uuid", snapshot.getUuid().toString());
             yaml.set("current_page", snapshot.getCurrentPage());
+            // Version de session qui a produit ces pages : une session plus récente d'un autre serveur les dépasse
+            if (snapshot.getEpoch() >= 0) yaml.set("epoch", snapshot.getEpoch());
             for (Map.Entry<Integer, ItemStack[]> page : snapshot.pagesView().entrySet()) {
                 yaml.set("pages." + page.getKey(), ItemCodec.encodePage(page.getValue(), plugin.getLogger()));
             }
             // Marque de fin et écriture atomique : un fichier coupé par un arrêt brutal n'est jamais pris pour vide
             yaml.set("complete", true);
+            if (network != null && !superseded) {
+                try {
+                    long id = plugin.getDatabaseManager().storeDump(snapshot.getUuid(), snapshot.getEpoch(), yaml.saveToString());
+                    dumpFiles.put(snapshot, DumpRef.row(id));
+                    plugin.getLogger().log(Level.SEVERE, "Écriture des pages de " + snapshot.getUuid() + " échouée : copie de secours gardée en base"
+                        + " (ligne " + id + " de shinventorypages_unsaved), reprise à sa prochaine connexion sur n'importe quel serveur", cause);
+                    return;
+                } catch (Exception e) {
+                    plugin.getLogger().log(Level.WARNING, "Copie de secours impossible en base, copie sur disque : " + e.getMessage());
+                }
+            }
+            File folder = unsavedFolder(plugin);
+            if (!folder.isDirectory() && !folder.mkdirs()) throw new IllegalStateException("cannot create " + folder);
+            String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS").format(new Date());
+            File file = new File(folder, snapshot.getUuid() + "-" + stamp + (superseded ? ".superseded" : ".yml"));
             File temp = new File(folder, file.getName() + ".tmp");
             yaml.save(temp);
             java.nio.file.Files.move(temp.toPath(), file.toPath(),
                 java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            dumpFiles.put(snapshot, file);
-            plugin.getLogger().log(Level.SEVERE, "Base injoignable : pages de " + snapshot.getUuid()
-                + " gardées dans " + file.getPath() + " (reprises à la prochaine connexion)", cause);
+            dumpFiles.put(snapshot, DumpRef.of(file));
+            if (superseded) {
+                plugin.getLogger().log(Level.SEVERE, "Pages de " + snapshot.getUuid() + " dépassées par un autre serveur (le joueur y a été"
+                    + " repris avant la fin de cette écriture) : gardées dans " + file.getPath() + ", à examiner (/ship recover <fichier> force)", cause);
+            } else {
+                plugin.getLogger().log(Level.SEVERE, "Base injoignable : pages de " + snapshot.getUuid()
+                    + " gardées dans " + file.getPath() + " (reprises à la prochaine connexion)", cause);
+            }
         } catch (Exception e) {
             plugin.getLogger().log(Level.SEVERE, "PERTE : pages de " + snapshot.getUuid()
                 + " ni écrites en base ni sur disque", e);
@@ -706,48 +889,85 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     }
 
     /**
-     * Connexion : un fichier de secours de ce joueur contient des pages plus récentes que la base (écriture échouée
-     * à son dernier départ). Lecture stricte et tout ou rien : un fichier incomplet ou dont une page est illisible
-     * est mis de côté (« .failed ») sans rien appliquer. Sinon ses pages remplacent celles de la base ; la page
-     * courante du fichier est ignorée (l'inventaire porté enregistré par Minecraft fait foi). Le fichier n'est renommé
-     * « .applied » qu'une fois ses pages couvertes par une écriture validée (onSaveCommitted) : un arrêt avant ne perd rien.
+     * Connexion : une copie de secours de ce joueur contient des pages plus récentes que la base (écriture échouée
+     * à son dernier départ). Lecture stricte et tout ou rien : une copie incomplète ou dont une page est illisible
+     * est mise de côté (« .failed ») sans rien appliquer. Sinon ses pages remplacent celles de la base ; la page
+     * courante de la copie est ignorée (l'inventaire porté enregistré par Minecraft fait foi). La copie n'est retirée
+     * (« .applied », ou ligne supprimée) qu'une fois ses pages couvertes par une écriture validée (onSaveCommitted) :
+     * un arrêt avant ne perd rien.
      *
-     * @return les fichiers appliqués
+     * <p>En mode réseau, une copie qui porte une version de session n'est reprise que si elle vient de la session
+     * précédente : celle d'une session que l'autre serveur a dépassée depuis aurait écrasé des pages plus récentes
+     * (mise de côté sous « .superseded »). Elles viennent des fichiers de ce serveur et des lignes de la base.</p>
+     *
+     * @return les copies appliquées
      */
-    private List<File> applyUnsavedFiles(Player player, PlayerInventoryData data) {
-        File[] files = unsavedFolder(plugin).listFiles((dir, name) ->
-            name.startsWith(player.getUniqueId() + "-") && name.endsWith(".yml"));
-        List<File> applied = new ArrayList<>();
-        pendingDumps.remove(player.getUniqueId());
-        if (files == null || files.length == 0) return applied;
-        java.util.Arrays.sort(files, java.util.Comparator.comparing(File::getName));
-        for (File file : files) {
-            Map<Integer, ItemStack[]> decoded;
-            try {
-                decoded = readUnsavedFile(file, true);
-            } catch (Exception e) {
-                plugin.getLogger().log(Level.SEVERE, "Fichier de secours illisible, mis de côté sans rien appliquer : "
-                    + file.getPath(), e);
-                retire(file, ".failed");
-                continue;
+    private List<DumpRef> applyUnsaved(Player player, PlayerInventoryData data, NetworkLoad load) {
+        UUID uuid = player.getUniqueId();
+        List<DumpRef> applied = new ArrayList<>();
+        pendingDumps.remove(uuid);
+        File[] files = unsavedFolder(plugin).listFiles((dir, name) -> name.startsWith(uuid + "-") && name.endsWith(".yml"));
+        if (files != null) {
+            java.util.Arrays.sort(files, java.util.Comparator.comparing(File::getName));
+            for (File file : files) {
+                DumpRef ref = DumpRef.of(file);
+                YamlConfiguration yaml;
+                try {
+                    yaml = new YamlConfiguration();
+                    yaml.load(file);
+                } catch (Exception e) {
+                    plugin.getLogger().log(Level.SEVERE, "Fichier de secours illisible, mis de côté sans rien appliquer : " + file.getPath(), e);
+                    retire(ref, ".failed", uuid);
+                    continue;
+                }
+                applyDump(player, data, ref, yaml, load, applied);
             }
-            decoded.forEach(data::restoreUnsavedPage);
-            Map<Integer, Integer> restoredVersions = new HashMap<>();
-            for (Integer page : decoded.keySet()) restoredVersions.put(page, data.versionOf(page));
-            pendingDumps.computeIfAbsent(player.getUniqueId(), k -> new ArrayList<>())
-                .add(new PendingDump(file, restoredVersions));
-            applied.add(file);
-            plugin.getLogger().warning(decoded.size() + " page(s) de " + player.getName()
-                + " reprises du fichier de secours " + file.getName());
+        }
+        if (load != null) {
+            for (NetworkDump dump : load.dumps()) {
+                DumpRef ref = DumpRef.row(dump.id());
+                YamlConfiguration yaml = new YamlConfiguration();
+                try {
+                    yaml.loadFromString(dump.yaml());
+                } catch (Exception e) {
+                    plugin.getLogger().log(Level.SEVERE, "Copie de secours illisible en base, laissée telle quelle : " + ref.describe(), e);
+                    continue;
+                }
+                applyDump(player, data, ref, yaml, load, applied);
+            }
         }
         return applied;
     }
 
-    /** Pages d'un fichier de secours complet, sans sa page courante si {@code skipWornPage}. */
-    private static Map<Integer, ItemStack[]> readUnsavedFile(File file, boolean skipWornPage) throws Exception {
-        YamlConfiguration yaml = new YamlConfiguration();
-        yaml.load(file);
-        if (!yaml.getBoolean("complete", false)) throw new java.io.IOException("fichier incomplet");
+    private void applyDump(Player player, PlayerInventoryData data, DumpRef ref, YamlConfiguration yaml, NetworkLoad load, List<DumpRef> applied) {
+        UUID uuid = player.getUniqueId();
+        Map<Integer, ItemStack[]> decoded;
+        try {
+            decoded = decodeDump(yaml, true);
+        } catch (Exception e) {
+            plugin.getLogger().log(Level.SEVERE, "Copie de secours illisible, mise de côté sans rien appliquer : " + ref.describe(), e);
+            if (!ref.isRow()) retire(ref, ".failed", uuid);
+            return;
+        }
+        long epoch = yaml.getLong("epoch", -1L);
+        if (load != null && epoch > 0 && epoch != load.prior()) {
+            plugin.getLogger().severe("Copie de secours " + ref.describe() + " de " + player.getName() + " dépassée par un autre serveur"
+                + " (session " + epoch + ", précédente " + load.prior() + ") : non reprise");
+            if (!ref.isRow()) retire(ref, ".superseded", uuid);
+            return;
+        }
+        decoded.forEach(data::restoreUnsavedPage);
+        Map<Integer, Integer> restoredVersions = new HashMap<>();
+        for (Integer page : decoded.keySet()) restoredVersions.put(page, data.versionOf(page));
+        pendingDumps.computeIfAbsent(uuid, k -> new ArrayList<>()).add(new PendingDump(ref, restoredVersions));
+        applied.add(ref);
+        plugin.getLogger().warning(decoded.size() + " page(s) de " + player.getName()
+            + " reprises de la copie de secours " + ref.describe());
+    }
+
+    /** Pages d'une copie de secours complète, sans sa page courante si {@code skipWornPage}. */
+    private static Map<Integer, ItemStack[]> decodeDump(YamlConfiguration yaml, boolean skipWornPage) throws Exception {
+        if (!yaml.getBoolean("complete", false)) throw new java.io.IOException("copie incomplète");
         int filePage = yaml.getInt("current_page", -1);
         Map<Integer, ItemStack[]> pages = new java.util.TreeMap<>();
         var section = yaml.getConfigurationSection("pages");
@@ -761,8 +981,30 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         return pages;
     }
 
-    /** Renomme un fichier de secours traité ; à défaut le supprime (jamais repris deux fois). */
-    private void retire(File file, String suffix) {
+    private static Map<Integer, ItemStack[]> readUnsavedFile(File file, boolean skipWornPage) throws Exception {
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.load(file);
+        return decodeDump(yaml, skipWornPage);
+    }
+
+    /**
+     * Retire une copie de secours traitée : un fichier est renommé (à défaut supprimé, jamais repris deux fois), une
+     * ligne de la base est supprimée (hors du thread principal, dans la file du joueur).
+     */
+    private void retire(DumpRef ref, String suffix, UUID uuid) {
+        if (ref.isRow()) {
+            queueDb(uuid, () -> {
+                plugin.getDatabaseManager().deleteDump(ref.rowId());
+                return null;
+            }).whenComplete((ignored, error) -> {
+                if (error != null) {
+                    plugin.getLogger().log(Level.SEVERE, "Copie de secours " + ref.describe() + " non supprimée : elle serait reprise à"
+                        + " la prochaine connexion, à supprimer à la main", error);
+                }
+            });
+            return;
+        }
+        File file = ref.file();
         if (file.renameTo(new File(file.getPath() + suffix))) return;
         if (!file.delete()) {
             plugin.getLogger().severe("Fichier de secours ni renommé ni supprimé, à retirer à la main : " + file.getPath());
@@ -773,7 +1015,8 @@ public class InventoryManager implements ISHInventoryPagesAPI {
      * /ship recover : réécrit en base les pages d'un fichier de secours, pour un joueur hors ligne qui ne s'est pas
      * reconnecté depuis (sinon la base est plus récente : refus, sauf « force »). La page courante du fichier n'est
      * pas écrite : elle vit dans l'inventaire enregistré par Minecraft ; la page courante en base devient celle du
-     * fichier, celle que représente cet inventaire.
+     * fichier, celle que représente cet inventaire. En mode réseau, un fichier d'une session dépassée par un autre
+     * serveur est refusé de même, sauf « force ».
      */
     public void recoverUnsaved(CommandSender sender, String fileName, boolean force) {
         File file = new File(unsavedFolder(plugin), fileName);
@@ -801,19 +1044,30 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         queueDb(uuid, () -> {
             // État de la base relu d'abord : seules les pages du fichier sont écrites, sauf sa page courante, et la page
             // courante en base devient celle du fichier (celle que représente l'inventaire enregistré par Minecraft)
-            PlayerInventoryData stored = plugin.getDatabaseManager().load(uuid, maxPossible);
+            DatabaseManager db = plugin.getDatabaseManager();
+            PlayerInventoryData stored = db.load(uuid, maxPossible);
+            NetworkLoad claim = db.takeNetworkLoad(uuid);
+            long fileEpoch = yaml.getLong("epoch", -1L);
+            if (!force && claim != null && fileEpoch > 0 && fileEpoch != claim.prior()) {
+                db.forget(uuid);
+                throw new SupersededDumpException("session " + fileEpoch + " dépassée (précédente : " + claim.prior() + ")");
+            }
             PlayerInventoryData data = stored != null ? stored : new PlayerInventoryData(uuid, maxPossible);
             // La page courante du fichier est celle que l'inventaire porté (fichier joueur) représente : elle seule
             // est sautée ; la page courante enregistrée en base peut être périmée et ne protège rien
             data.setLoadedCurrentPage(yaml.getInt("current_page", data.getCurrentPage()));
             readUnsavedFile(file, true).forEach(data::restoreUnsavedPage);
-            plugin.getDatabaseManager().save(data.snapshot());
-            plugin.getDatabaseManager().forget(uuid);
+            PlayerInventoryData snapshot = data.snapshot();
+            snapshot.setEpoch(db.sessionEpoch(uuid));
+            db.save(snapshot);
+            db.forget(uuid);
             return null;
         }).whenComplete((ignored, error) -> runOnMainThread(() -> {
             if (error == null) {
-                retire(file, ".recovered");
+                retire(DumpRef.of(file), ".recovered", uuid);
                 MessageUtil.sendMessage(sender, config.getMessage("recover_done", "%file%", fileName));
+            } else if (error instanceof SupersededDumpException || error.getCause() instanceof SupersededDumpException) {
+                MessageUtil.sendMessage(sender, config.getMessage("recover_superseded", "%file%", fileName));
             } else {
                 plugin.getLogger().log(Level.SEVERE, "Réimport de " + fileName + " échoué", error);
                 MessageUtil.sendMessage(sender, config.getMessage("recover_failed", "%file%", fileName));

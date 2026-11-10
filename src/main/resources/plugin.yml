@@ -3,7 +3,9 @@ version: '${project.version}'
 main: org.Cry_Legende.sHInventoryPages.SHInventoryPages
 api-version: '1.21'
 author: Cry_Legende
-softdepend: [PlaceholderAPI] # For placeholder support
+# SHNetwork et HuskSync sont facultatifs : sans eux, rien ne change (serveur seul). Avec eux, les pages se partagent
+# entre serveurs (voir la section reseau de config.yml).
+softdepend: [PlaceholderAPI, SHNetwork, HuskSync]
 
 commands:
   shinventorypages:

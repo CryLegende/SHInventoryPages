@@ -10,6 +10,9 @@ import org.Cry_Legende.sHInventoryPages.inventory.InventoryManager;
 import org.Cry_Legende.sHInventoryPages.listeners.InventoryListener;
 import org.Cry_Legende.sHInventoryPages.listeners.OverflowListener;
 import org.Cry_Legende.sHInventoryPages.listeners.PlayerListener;
+import org.Cry_Legende.sHInventoryPages.network.NetworkLink;
+import org.Cry_Legende.sHInventoryPages.network.NetworkSync;
+import org.Cry_Legende.sHInventoryPages.network.ShNetworkLink;
 import org.Cry_Legende.sHInventoryPages.placeholders.SHPlaceholders;
 import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Bukkit;
@@ -21,6 +24,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.Nullable;
 
+import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -61,6 +65,7 @@ public final class SHInventoryPages extends JavaPlugin {
         this.databaseExecutor = Executors.newFixedThreadPool(configManager.getDatabaseThreads(), daemonThreads());
         try {
             this.inventoryManager = new InventoryManager(this, databaseExecutor);
+            enableNetwork();
             registerListeners();
             registerCommands();
         } catch (Exception e) {
@@ -78,6 +83,31 @@ public final class SHInventoryPages extends JavaPlugin {
 
         syncPlaceholders();
         getLogger().info("SHInventoryPages v" + getPluginMeta().getVersion() + " enabled successfully!");
+    }
+
+    /**
+     * Passe en mode réseau si SHNetwork est installé et que 'reseau.actif' est vrai : les pages sont alors partagées
+     * avec les autres serveurs par la base (version de session, sauvegarde de départ attendue par l'arrivée). Les
+     * classes qui touchent à SHNetwork ne sont chargées qu'ici : sans lui, le plugin se comporte exactement comme avant.
+     */
+    private void enableNetwork() {
+        if (!configManager.isNetworkEnabled()) return;
+        if (!Bukkit.getPluginManager().isPluginEnabled("SHNetwork")) return;
+        try {
+            NetworkLink link = ShNetworkLink.open();
+            if (!databaseManager.enableNetwork(link.serverName())) {
+                getLogger().severe("SHNetwork présent mais cette base ne peut pas être partagée entre serveurs (type "
+                    + configManager.getDatabaseType() + ") : les pages restent locales à ce serveur.");
+                return;
+            }
+            NetworkSync sync = new NetworkSync(this, link,
+                Duration.ofSeconds(configManager.getNetworkWaitSeconds()), configManager.getNetworkSyncWaitSeconds());
+            inventoryManager.setNetwork(sync);
+            sync.start(inventoryManager::departureFuture);
+            getLogger().info("SHNetwork détecté : pages partagées avec les autres serveurs (serveur " + link.serverName() + ").");
+        } catch (Exception | LinkageError e) {
+            getLogger().log(Level.SEVERE, "SHNetwork présent mais inutilisable, pages locales à ce serveur : " + e);
+        }
     }
 
     /** Enregistre ou retire l'extension PlaceholderAPI selon placeholders.enabled (démarrage et /ship reload). */

@@ -123,5 +123,12 @@
             <version>2.11.6</version>
             <scope>provided</scope>
         </dependency>
+        <!-- Facultatif à l'exécution (softdepend) : sans lui, les pages restent locales à chaque serveur -->
+        <dependency>
+            <groupId>org.Cry_Legende</groupId>
+            <artifactId>SHNetwork</artifactId>
+            <version>1.0</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

@@ -132,6 +132,47 @@ public class MySQLManager extends SqlDatabase {
         }
     }
 
+    /**
+     * Tables du mode réseau, dans la même base que les pages : la version de session et les pages sont écrites dans
+     * la même transaction. Voir sql/schema.sql pour les créer à la main.
+     */
+    @Override
+    public boolean enableNetwork(String server) {
+        String sync = "CREATE TABLE IF NOT EXISTS `shinventorypages_sync` ("
+            + "`uuid` VARCHAR(36) NOT NULL,"
+            + "`version` BIGINT NOT NULL,"
+            + "`server` VARCHAR(64) NOT NULL,"
+            + "`updated` BIGINT NOT NULL,"
+            + "PRIMARY KEY(`uuid`)"
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+        String unsaved = "CREATE TABLE IF NOT EXISTS `shinventorypages_unsaved` ("
+            + "`id` BIGINT NOT NULL AUTO_INCREMENT,"
+            + "`uuid` VARCHAR(36) NOT NULL,"
+            + "`epoch` BIGINT NOT NULL,"
+            + "`server` VARCHAR(64) NOT NULL,"
+            + "`created` BIGINT NOT NULL,"
+            + "`superseded` TINYINT NOT NULL DEFAULT 0,"
+            + "`data` LONGTEXT NOT NULL,"
+            + "PRIMARY KEY(`id`),"
+            + "KEY `idx_uuid` (`uuid`)"
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+        try {
+            withConnection(connection -> {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute(sync);
+                    statement.execute(unsaved);
+                }
+                return null;
+            });
+        } catch (SQLException e) {
+            plugin.getLogger().log(Level.SEVERE, "Tables du mode réseau introuvables et impossibles à créer (voir sql/schema.sql)", e);
+            return false;
+        }
+        this.serverName = server;
+        this.network = true;
+        return true;
+    }
+
     private boolean columnExists(Connection connection, String catalog, String table, String column) throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
         try (ResultSet rs = metaData.getColumns(catalog, null, table, column)) {

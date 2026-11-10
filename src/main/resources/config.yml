@@ -1,7 +1,13 @@
 #----------------------------------------------------#
 #            SHInventoryPages - Configuration        #
 #----------------------------------------------------#
-# Tout est rechargeable par /ship reload, sauf la section database (redémarrage).
+# Pages d'inventaire supplémentaires par joueur, nombre selon la permission shinventorypages.pages.<n>, rangées en
+# base de données ; débordement des objets donnés à un joueur à inventaire plein vers ses autres pages.
+#
+# Commandes (alias /ship) : /shinventorypages reload | saveall | info <joueur> | recover <fichier> [force]
+# Permissions : shinventorypages.admin (commandes), shinventorypages.pages.<n> et shinventorypages.pages.* (pages).
+#
+# Tout est rechargeable par /ship reload, sauf les sections database et reseau (redémarrage).
 # Couleurs : codes & et &#RRGGBB. Sons : nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click) ; "" = aucun son.
 
 database:
@@ -22,6 +28,23 @@ database:
     properties: useSSL=false&autoReconnect=true
     # Connexions ouvertes au plus
     pool_size: 4
+
+# Mode réseau. Actif seulement si SHNetwork est installé, que 'actif' vaut true et que la base est MariaDB ou MySQL :
+# plusieurs serveurs de jeu partagent alors les pages d'un joueur par la même base (database.mysql, identique sur tous).
+# Sans SHNetwork, rien de ceci n'est utilisé. Demande un redémarrage.
+#   - À son arrivée, un joueur ne charge ses pages qu'une fois que le serveur de départ a validé les siennes en base
+#     et, si HuskSync est installé, que HuskSync lui a appliqué son inventaire porté (la page portée en fait partie).
+#   - Chaque chargement prend une version de session dans la table shinventorypages_sync ; une écriture d'un serveur
+#     que l'autre a dépassé est refusée et gardée à part dans unsaved/ (fichier .superseded), au lieu d'écraser les pages.
+#   - Les copies de secours d'une écriture échouée vont en base (table shinventorypages_unsaved) avant le disque.
+reseau:
+  actif: true
+  # Durée maximale, en secondes, pendant laquelle on attend la confirmation du serveur de départ avant de charger
+  # les pages telles que la base les a (serveur de départ arrêté brutalement)
+  attente-max-secondes: 10
+  # Durée maximale, en secondes, pendant laquelle on attend que HuskSync ait appliqué l'inventaire du joueur ; au-delà
+  # le joueur est déconnecté (ses pages ne sont pas chargées), comme quand la base est injoignable
+  attente-husksync-secondes: 30
 
 inventory:
   # Emplacement du sélecteur de pages (0-8 : barre d'action, 9-35 : inventaire). Jamais utilisé pour un objet.
@@ -163,6 +186,8 @@ messages:
   recover_stale: "&7&l« &c&lSH &8&l» &7Le joueur s'est reconnecté depuis &c%file% &7: la base est plus récente. Ajoutez &cforce &7pour écraser."
   # /ship recover (%file% = fichier de plugins/SHInventoryPages/unsaved/)
   recover_not_found: "&7&l« &c&lSH &8&l» &7Fichier de secours &c%file% &7introuvable."
+  # Fichier d'une session que l'autre serveur a dépassée depuis (mode réseau) : refusé sans « force »
+  recover_superseded: "&7&l« &c&lSH &8&l» &7Le fichier &c%file% &7date d'une session dépassée par un autre serveur : ses pages sont plus anciennes que celles de la base. Ajoutez &cforce &7pour écraser."
   recover_player_online: "&7&l« &c&lSH &8&l» &7Le joueur doit être &chors ligne &7pour réimporter ses pages."
   recover_done: "&7&l« &a&lSH &8&l» &7Pages de &a%file% &7réimportées en base."
   recover_failed: "&7&l« &c&lSH &8&l» &7Réimport de &c%file% &7échoué. &cVérifiez la console&7."

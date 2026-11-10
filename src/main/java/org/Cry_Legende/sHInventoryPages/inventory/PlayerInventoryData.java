@@ -42,6 +42,8 @@ public class PlayerInventoryData {
     private final List<ItemStack> strayItems = new ArrayList<>();
     /** Copie de sauvegarde uniquement : version de chaque page copiée. */
     private Map<Integer, Integer> snapshotVersions = Map.of();
+    /** Mode réseau, copie de sauvegarde uniquement : version de session du chargement qui l'a produite (-1 sinon). */
+    private long epoch = -1L;
 
     public PlayerInventoryData(UUID uuid, int maxPages) {
         this.uuid = uuid;
@@ -50,6 +52,15 @@ public class PlayerInventoryData {
 
     public UUID getUuid() {
         return uuid;
+    }
+
+    /** Mode réseau : version de session de la copie (voir SqlDatabase), -1 hors mode réseau. */
+    public long getEpoch() {
+        return epoch;
+    }
+
+    public void setEpoch(long epoch) {
+        this.epoch = epoch;
     }
 
     public int getCurrentPage() {

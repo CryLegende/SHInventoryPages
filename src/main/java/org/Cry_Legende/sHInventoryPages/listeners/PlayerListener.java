@@ -30,7 +30,13 @@ public class PlayerListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPlayerJoin(PlayerJoinEvent event) {
-        manager.loadPlayerData(event.getPlayer());
+        manager.joinPlayer(event.getPlayer());
+    }
+
+    /** Début d'un départ : en mode réseau, la sauvegarde de départ confiée à SHNetwork attend notre écriture (MONITOR). */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onPlayerQuitEarly(PlayerQuitEvent event) {
+        manager.markQuitting(event.getPlayer().getUniqueId());
     }
 
     /**

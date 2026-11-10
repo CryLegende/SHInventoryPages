@@ -29,4 +29,36 @@ public interface DatabaseManager {
 
     /** Oublie ce que la base contient pour ce joueur (après sa dernière sauvegarde de session). */
     void forget(UUID uuid);
+
+    // ------------------------------------------------------------------ mode réseau (base partagée par plusieurs serveurs)
+
+    /**
+     * Passe en mode réseau : chaque chargement prend une version de session, chaque écriture la vérifie et les
+     * copies de secours sont gardées en base. Faux si ce stockage ne peut pas être partagé (SQLite).
+     *
+     * @param server nom de ce serveur sur le réseau
+     */
+    default boolean enableNetwork(String server) {
+        return false;
+    }
+
+    /** Version de session prise au chargement du joueur, ou -1 (hors mode réseau, ou joueur non chargé). */
+    default long sessionEpoch(UUID uuid) {
+        return -1L;
+    }
+
+    /** Ce que le dernier chargement du joueur a trouvé de propre au mode réseau (lu une seule fois), ou null. */
+    default NetworkLoad takeNetworkLoad(UUID uuid) {
+        return null;
+    }
+
+    /** Garde une copie de secours en base (mode réseau) ; rend l'identifiant de la ligne. */
+    default long storeDump(UUID uuid, long epoch, String yaml) throws Exception {
+        throw new UnsupportedOperationException("Copies de secours en base : mode réseau seulement");
+    }
+
+    /** Supprime une copie de secours de la base une fois ses pages couvertes par une écriture validée. */
+    default void deleteDump(long id) throws Exception {
+        throw new UnsupportedOperationException("Copies de secours en base : mode réseau seulement");
+    }
 }

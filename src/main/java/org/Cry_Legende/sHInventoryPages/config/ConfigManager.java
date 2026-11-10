@@ -74,6 +74,22 @@ public class ConfigManager {
         return Math.max(1, config.getInt("database.threads", 4));
     }
 
+    // --- Réseau ---
+    /** Mode réseau voulu (il ne s'active que si SHNetwork est installé). */
+    public boolean isNetworkEnabled() {
+        return config.getBoolean("reseau.actif", true);
+    }
+
+    /** Attente maximale, en secondes, de la confirmation du serveur de départ. */
+    public int getNetworkWaitSeconds() {
+        return Math.max(1, config.getInt("reseau.attente-max-secondes", 10));
+    }
+
+    /** Attente maximale, en secondes, de la fin de synchronisation de HuskSync. */
+    public int getNetworkSyncWaitSeconds() {
+        return Math.max(1, config.getInt("reseau.attente-husksync-secondes", 30));
+    }
+
     // --- Inventory ---
     public int getSwitcherSlot() {
         int slot = config.getInt("inventory.switcher_slot", 17);
