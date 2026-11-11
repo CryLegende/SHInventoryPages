@@ -11,7 +11,6 @@ commands:
   shinventorypages:
     description: Main command for SHInventoryPages.
     usage: /shinventorypages <reload|saveall|info <joueur>|recover <fichier> [force]|history <joueur>>
-    permission: shinventorypages.admin;shinventorypages.history
     aliases: [ship]
 
 permissions:
@@ -23,10 +22,27 @@ permissions:
       shinventorypages.history.restore: true
       shinventorypages.pages.*: true
   shinventorypages.admin:
-    description: Allows access to admin commands like reload.
+    description: All the administration subcommands of /shinventorypages.
     default: op
+    children:
+      shinventorypages.admin.reload: true
+      shinventorypages.admin.saveall: true
+      shinventorypages.admin.info: true
+      shinventorypages.admin.recover: true
+  shinventorypages.admin.reload:
+    description: Reloads config.yml and messages.yml (/shinventorypages reload).
+    default: false
+  shinventorypages.admin.saveall:
+    description: Writes the pages of every player (/shinventorypages saveall).
+    default: false
+  shinventorypages.admin.info:
+    description: Shows the pages of a player (/shinventorypages info <player>).
+    default: false
+  shinventorypages.admin.recover:
+    description: Re-imports a file of unsaved/ (/shinventorypages recover <file>).
+    default: false
   shinventorypages.history:
-    description: Opens the page history of a player (/ship history <player>).
+    description: Opens the page history of a player (/shinventorypages history <player>).
     default: op
   shinventorypages.history.restore:
     description: Copies items out of the page history and restores a page from it.
@@ -36,6 +52,5 @@ permissions:
   shinventorypages.pages.*:
     description: Wildcard for page amount permissions (e.g., shinventorypages.pages.5).
     default: false # Ne pas donner par défaut
-  shinventorypages.pages.<number>: # Géré dynamiquement, mais bon à lister
-    description: Grants access up to a specific number of pages.
-    default: false
+  # shinventorypages.pages.<n> (pages.2 à pages.<max_possible_pages>) est géré dynamiquement, non déclaré : il donne
+  # n pages au joueur (exemple : shinventorypages.pages.5).

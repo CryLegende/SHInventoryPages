@@ -134,7 +134,7 @@ public final class SHInventoryPages extends JavaPlugin {
         }
     }
 
-    /** Enregistre ou retire l'extension PlaceholderAPI selon placeholders.enabled (démarrage et /ship reload). */
+    /** Enregistre ou retire l'extension PlaceholderAPI selon placeholders.enabled (démarrage et /shinventorypages reload). */
     private void syncPlaceholders() {
         boolean wanted = configManager.isPapiEnabled();
         if (wanted && placeholders == null) {
@@ -281,12 +281,15 @@ public final class SHInventoryPages extends JavaPlugin {
         historyPurgeTask = null;
     }
 
-    /** /ship reload : réglages, messages, objets et tâches. Le type et l'accès à la base demandent un redémarrage. */
-    public void reloadPluginConfig() {
+    /**
+     * /shinventorypages reload : réglages, messages, objets et tâches. Un fichier invalide annule tout (exception).
+     * Le type et l'accès à la base, et la section reseau, demandent un redémarrage.
+     */
+    public void reloadPluginConfig() throws ConfigManager.ConfigException {
         if (!fullyEnabled) return;
         int oldSlot = inventoryManager.getSwitcherSlot();
+        configManager.reloadStrict();
         inventoryManager.saveAllNow();
-        configManager.loadConfig();
         inventoryManager.updateSettingsFromConfig();
         pageHistory.reload();
         if (inventoryManager.getSwitcherSlot() != oldSlot) {

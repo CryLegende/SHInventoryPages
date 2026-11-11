@@ -5,15 +5,21 @@
 # base de données ; débordement des objets donnés à un joueur à inventaire plein vers ses autres pages ; ramassage
 # vers les autres pages quand l'inventaire porté est plein ; historique de toutes les pages pour le staff.
 #
-# Commandes (alias /ship) :
-#   /ship reload | saveall | info <joueur> | recover <fichier> [force]   (shinventorypages.admin)
-#   /ship history <joueur>   copies de toutes les pages du joueur (shinventorypages.history) ; avec
-#                            shinventorypages.history.restore : copie d'un objet, restauration d'une page
-# Permissions : shinventorypages.admin, shinventorypages.history, shinventorypages.history.restore,
-#               shinventorypages.pages.<n> et shinventorypages.pages.* (nombre de pages).
+# Commandes (racine /shinventorypages, alias /ship) :
+#   /shinventorypages reload                      Recharge config.yml et messages.yml (shinventorypages.admin.reload)
+#   /shinventorypages saveall                     Écrit les pages de tous les joueurs (shinventorypages.admin.saveall)
+#   /shinventorypages info <joueur>               Pages d'un joueur connecté (shinventorypages.admin.info)
+#   /shinventorypages recover <fichier> [force]   Réimporte un fichier de unsaved/ (shinventorypages.admin.recover)
+#   /shinventorypages history <joueur>            Copies de toutes les pages du joueur (shinventorypages.history) ;
+#                                                 avec shinventorypages.history.restore : copie d'un objet,
+#                                                 restauration d'une page
+# Permissions : shinventorypages.admin (toutes les sous-commandes d'administration), shinventorypages.admin.reload,
+#               .saveall, .info et .recover (une chacune), shinventorypages.history,
+#               shinventorypages.history.restore, shinventorypages.pages.<n> (nombre de pages, ex.
+#               shinventorypages.pages.5) et shinventorypages.pages.* (plafond).
 #
-# Les messages sont dans messages.yml. Tout est rechargeable par /ship reload, sauf les sections database et reseau
-# (redémarrage). Couleurs : codes & et &#RRGGBB. Sons : nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click) ;
+# Les messages sont dans messages.yml. Tout est rechargeable par /shinventorypages reload, sauf les sections database et reseau
+# (redémarrage). Un fichier invalide annule le rechargement. Couleurs : codes & et &#RRGGBB. Sons : nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click) ;
 # "" = aucun son.
 
 database:
@@ -173,7 +179,7 @@ performance:
   # Regroupement des écritures après un rangement (ticks)
   deferred_save_ticks: 40
   # Base injoignable à la déconnexion : nouveaux essais pendant ce délai (secondes), puis copie dans
-  # plugins/SHInventoryPages/unsaved/ (réimport : /ship recover <fichier>, joueur hors ligne)
+  # plugins/SHInventoryPages/unsaved/ (réimport : /shinventorypages recover <fichier>, joueur hors ligne)
   end_of_session_retry_seconds: 180
   # Attente maximale des écritures à l'arrêt du serveur (secondes) ; au-delà, copie dans unsaved/
   shutdown_save_timeout: 30
@@ -186,7 +192,7 @@ placeholders:
 # shinventorypages_history) aux mêmes moments qu'InventoryRollbackPlus pour l'inventaire porté, et avant toute opération
 # sur toutes les pages (vente de toutes les pages, restauration). Une copie dont la seule page remplie est la page
 # portée n'est pas gardée (InventoryRollbackPlus l'a déjà), ni une copie identique à la précédente du joueur
-# (connexion, déconnexion, périodique). Consultation : /ship history <joueur>.
+# (connexion, déconnexion, périodique). Consultation : /shinventorypages history <joueur>.
 history:
   enabled: true
   # Copies gardées par joueur pour chaque moment (les plus récentes) ; 0 = aucune copie à ce moment

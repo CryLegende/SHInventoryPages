@@ -14,6 +14,7 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -21,9 +22,20 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.logging.Level;
 
-/** /shinventorypages reload | saveall | info &lt;joueur&gt; */
+/**
+ * /shinventorypages reload | saveall | info &lt;joueur&gt; | recover &lt;fichier&gt; [force] | history &lt;joueur&gt;.
+ * Chaque sous-commande d'administration a sa permission shinventorypages.admin.&lt;nom&gt; ; l'historique a la sienne,
+ * shinventorypages.history.
+ */
 public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
 
+    /** Sous-commandes et leur permission, dans l'ordre d'affichage de la ligne d'usage. */
+    private static final Map<String, String> PERMISSIONS = Map.of(
+        "reload", "shinventorypages.admin.reload",
+        "saveall", "shinventorypages.admin.saveall",
+        "info", "shinventorypages.admin.info",
+        "recover", "shinventorypages.admin.recover",
+        "history", "shinventorypages.history");
     private static final List<String> SUBCOMMANDS = List.of("reload", "saveall", "info", "recover", "history");
 
     private final SHInventoryPages plugin;
@@ -34,26 +46,41 @@ public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
         this.config = plugin.getConfigManager();
     }
 
+    /** Sous-commandes que l'expéditeur a le droit d'utiliser. */
+    private static List<String> allowed(CommandSender sender) {
+        List<String> names = new ArrayList<>();
+        for (String sub : SUBCOMMANDS) {
+            if (sender.hasPermission(PERMISSIONS.get(sub))) {
+                names.add(sub);
+            }
+        }
+        return names;
+    }
+
+    private void usage(CommandSender sender, List<String> allowed) {
+        MessageUtil.sendMessage(sender, config.getMessage("usage", "%subcommands%", String.join("|", allowed)));
+    }
+
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
-        // L'historique a sa propre permission : un modérateur peut le consulter sans les autres commandes
-        if (args.length > 0 && args[0].equalsIgnoreCase("history")) {
-            history(sender, label, args);
-            return true;
-        }
-        if (!sender.hasPermission("shinventorypages.admin")) {
+        List<String> allowed = allowed(sender);
+        if (allowed.isEmpty()) {
             MessageUtil.sendMessage(sender, config.getMessage("no_permission_command"));
             return true;
         }
-        if (args.length == 0) {
-            MessageUtil.sendMessage(sender, config.getMessage("command_usage", "%label%", label));
+        String sub = args.length == 0 ? "" : args[0].toLowerCase(Locale.ROOT);
+        if (!allowed.contains(sub)) {
+            usage(sender, allowed);
             return true;
         }
-        switch (args[0].toLowerCase(Locale.ROOT)) {
+        switch (sub) {
             case "reload" -> {
                 try {
                     plugin.reloadPluginConfig();
                     MessageUtil.sendMessage(sender, config.getMessage("reload_success"));
+                } catch (ConfigManager.ConfigException e) {
+                    plugin.getLogger().log(Level.SEVERE, "Rechargement annulé, " + e.getFile() + " illisible : " + e.getMessage());
+                    MessageUtil.sendMessage(sender, config.getMessage("reload_invalid", "%file%", e.getFile(), "%error%", String.valueOf(e.getMessage())));
                 } catch (Exception e) {
                     plugin.getLogger().log(Level.SEVERE, "Error reloading config", e);
                     MessageUtil.sendMessage(sender, config.getMessage("reload_fail"));
@@ -70,31 +97,27 @@ public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
                         }
                     }));
             }
-            case "info" -> info(sender, label, args);
+            case "info" -> info(sender, allowed, args);
             case "recover" -> {
                 if (args.length < 2) {
-                    MessageUtil.sendMessage(sender, config.getMessage("command_usage", "%label%", label));
+                    usage(sender, allowed);
                 } else {
                     plugin.getInventoryManager().recoverUnsaved(sender, args[1], args.length > 2 && args[2].equalsIgnoreCase("force"));
                 }
             }
-            default -> MessageUtil.sendMessage(sender, config.getMessage("command_usage", "%label%", label));
+            default -> history(sender, allowed, args);
         }
         return true;
     }
 
-    /** /ship history <joueur> : copies de toutes les pages du joueur, connecté ou non. */
-    private void history(CommandSender sender, String label, String[] args) {
-        if (!sender.hasPermission("shinventorypages.history")) {
-            MessageUtil.sendMessage(sender, config.getMessage("no_permission_command"));
-            return;
-        }
+    /** /shinventorypages history <joueur> : copies de toutes les pages du joueur, connecté ou non. */
+    private void history(CommandSender sender, List<String> allowed, String[] args) {
         if (!(sender instanceof Player staff)) {
             MessageUtil.sendMessage(sender, config.getMessage("only_players"));
             return;
         }
         if (args.length < 2) {
-            MessageUtil.sendMessage(sender, config.getMessage("command_usage", "%label%", label));
+            usage(sender, allowed);
             return;
         }
         Player online = Bukkit.getPlayerExact(args[1]);
@@ -108,9 +131,9 @@ public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
         plugin.getHistoryMenus().openList(staff, target.getUniqueId(), name, 0);
     }
 
-    private void info(CommandSender sender, String label, String[] args) {
+    private void info(CommandSender sender, List<String> allowed, String[] args) {
         if (args.length < 2) {
-            MessageUtil.sendMessage(sender, config.getMessage("command_usage", "%label%", label));
+            usage(sender, allowed);
             return;
         }
         Player target = Bukkit.getPlayerExact(args[1]);
@@ -143,21 +166,18 @@ public class CommandSHInventoryPages implements CommandExecutor, TabCompleter {
     @Nullable
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
-        boolean admin = sender.hasPermission("shinventorypages.admin");
-        boolean history = sender.hasPermission("shinventorypages.history");
-        if (!admin && !history) return List.of();
+        List<String> allowed = allowed(sender);
+        if (allowed.isEmpty()) return List.of();
         if (args.length == 1) {
             String prefix = args[0].toLowerCase(Locale.ROOT);
-            return SUBCOMMANDS.stream().filter(s -> admin || s.equals("history")).filter(s -> s.startsWith(prefix)).toList();
+            return allowed.stream().filter(s -> s.startsWith(prefix)).toList();
         }
-        if (args.length == 2 && args[0].equalsIgnoreCase("history")) {
+        String sub = args[0].toLowerCase(Locale.ROOT);
+        if (!allowed.contains(sub)) return List.of();
+        if (args.length == 2 && (sub.equals("history") || sub.equals("info"))) {
             return null; // noms des joueurs connectés
         }
-        if (!admin) return List.of();
-        if (args.length == 2 && args[0].equalsIgnoreCase("info")) {
-            return null; // noms des joueurs connectés
-        }
-        if (args.length == 2 && args[0].equalsIgnoreCase("recover")) {
+        if (args.length == 2 && sub.equals("recover")) {
             String[] files = new java.io.File(plugin.getDataFolder(), "unsaved").list((dir, name) -> name.endsWith(".yml"));
             return files == null ? List.of() : java.util.Arrays.stream(files).filter(f -> f.startsWith(args[1])).toList();
         }

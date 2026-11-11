@@ -7,11 +7,11 @@ no_permission: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission de faire ce
 only_players: "&7&l« &c&lSH &8&l» &7Cette commande ne peut être exécutée que par des joueurs."
 player_not_found: "&7&l« &c&lSH &8&l» &7Le joueur &c%player% &7n'est pas connecté ou ses pages ne sont pas chargées."
 
-# /shinventorypages (%label% = commande tapée)
+# /shinventorypages (%subcommands% = sous-commandes permises à l'expéditeur, %file% et %error% = fichier illisible)
 no_permission_command: "&7&l« &c&lSH &8&l» &7Vous n'avez pas la permission d'utiliser cette commande."
-command_usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/%label% <reload|saveall|info <joueur>|recover <fichier> [force]|history <joueur>>"
+usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shinventorypages &7<&e%subcommands%&7>"
 recover_stale: "&7&l« &c&lSH &8&l» &7Le joueur s'est reconnecté depuis &c%file% &7: la base est plus récente. Ajoutez &cforce &7pour écraser."
-# /ship recover (%file% = fichier de plugins/SHInventoryPages/unsaved/)
+# /shinventorypages recover (%file% = fichier de plugins/SHInventoryPages/unsaved/)
 recover_not_found: "&7&l« &c&lSH &8&l» &7Fichier de secours &c%file% &7introuvable."
 # Fichier d'une session que l'autre serveur a dépassée depuis (mode réseau) : refusé sans « force »
 recover_superseded: "&7&l« &c&lSH &8&l» &7Le fichier &c%file% &7date d'une session dépassée par un autre serveur : ses pages sont plus anciennes que celles de la base. Ajoutez &cforce &7pour écraser."
@@ -19,6 +19,7 @@ recover_player_online: "&7&l« &c&lSH &8&l» &7Le joueur doit être &chors ligne
 recover_done: "&7&l« &a&lSH &8&l» &7Pages de &a%file% &7réimportées en base."
 recover_failed: "&7&l« &c&lSH &8&l» &7Réimport de &c%file% &7échoué. &cVérifiez la console&7."
 reload_success: "&7&l« &a&lSH &8&l» &7La configuration a été rechargée &aavec succès&7."
+reload_invalid: "&7&l« &c&lSH &8&l» &7Rechargement annulé : &c%file% &7est illisible (&c%error%&7). L'ancienne configuration est gardée."
 reload_fail: "&7&l« &c&lSH &8&l» &7Une erreur est survenue lors du rechargement de la configuration. &cVérifiez la console&7."
 save_all_started: "&7&l« &e&lSH &8&l» &7Sauvegarde des pages de tous les joueurs..."
 save_all_finished: "&7&l« &a&lSH &8&l» &7Pages de tous les joueurs &asauvegardées&7."
@@ -45,7 +46,7 @@ load_failed_kick: "&cVos pages d'inventaire n'ont pas pu être chargées.\n&7Rec
 # Valeur des placeholders tant que les pages ne sont pas chargées
 placeholder_loading: "..."
 
-# Historique des pages (/ship history <joueur>)
+# Historique des pages (/shinventorypages history <joueur>)
 history_disabled: "&7&l« &c&lSH &8&l» &7L'historique des pages est &cdésactivé&7."
 history_failed: "&7&l« &c&lSH &8&l» &7Lecture de l'historique &céchouée&7. &cVérifiez la console&7."
 history_unknown_player: "&7&l« &c&lSH &8&l» &7Le joueur &c%player% &7n'est jamais venu sur ce serveur."

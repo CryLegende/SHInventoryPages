@@ -27,7 +27,7 @@ import java.util.UUID;
 import java.util.logging.Level;
 
 /**
- * Menus de l'historique des pages ({@code /ship history <joueur>}) : liste des copies d'un joueur, puis contenu de
+ * Menus de l'historique des pages ({@code /shinventorypages history <joueur>}) : liste des copies d'un joueur, puis contenu de
  * chaque page d'une copie. Avec {@code shinventorypages.history.restore}, un clic sur un objet en donne une copie au
  * membre du staff, et shift + clic sur le bouton de restauration remplace la page du joueur par celle de la copie.
  */

@@ -8,6 +8,7 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.Registry;
 import org.bukkit.Sound;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 
@@ -36,6 +37,54 @@ public class ConfigManager {
         this.config = plugin.getConfig();
         this.messages = loadMessages();
         MessageUtil.setPluginPrefix(getPluginPrefix());
+    }
+
+    /** Erreur de lecture d'un fichier de configuration : nom du fichier et cause. */
+    public static final class ConfigException extends Exception {
+        private final String file;
+
+        ConfigException(String file, String message) {
+            super(message);
+            this.file = file;
+        }
+
+        public String getFile() {
+            return file;
+        }
+    }
+
+    /**
+     * Relit config.yml et messages.yml pour /shinventorypages reload. Rien n'est remplacé tant que les deux fichiers ne
+     * sont pas lus sans erreur : sinon l'exception porte le fichier en cause et l'ancienne configuration reste en place.
+     */
+    public void reloadStrict() throws ConfigException {
+        YamlConfiguration newConfig = strict("config.yml");
+        newConfig.setDefaults(bundled("config.yml"));
+        YamlConfiguration newMessages = strict("messages.yml");
+        newMessages.setDefaults(bundled("messages.yml"));
+        this.config = newConfig;
+        this.messages = newMessages;
+        MessageUtil.setPluginPrefix(getPluginPrefix());
+    }
+
+    private YamlConfiguration strict(String name) throws ConfigException {
+        YamlConfiguration yaml = new YamlConfiguration();
+        try {
+            yaml.load(new File(plugin.getDataFolder(), name));
+        } catch (IOException | InvalidConfigurationException e) {
+            String reason = e.getMessage() == null ? e.toString() : e.getMessage().lines().findFirst().orElse("");
+            throw new ConfigException(name, reason);
+        }
+        return yaml;
+    }
+
+    private YamlConfiguration bundled(String name) {
+        try (InputStream in = plugin.getResource(name)) {
+            return in == null ? new YamlConfiguration()
+                : YamlConfiguration.loadConfiguration(new InputStreamReader(in, StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            return new YamlConfiguration();
+        }
     }
 
     /**

@@ -905,7 +905,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
      * Dernier recours : les pages qui n'ont pas pu être écrites sont gardées. En mode réseau elles vont d'abord en
      * base (table shinventorypages_unsaved), lisible par tous les serveurs ; sur un serveur seul, ou si la base ne
      * répond pas, sur disque. Elles sont reprises automatiquement à la prochaine connexion du joueur
-     * ({@link #applyUnsaved}), ou par /ship recover pour un fichier. Une écriture refusée parce qu'un autre serveur a
+     * ({@link #applyUnsaved}), ou par /shinventorypages recover pour un fichier. Une écriture refusée parce qu'un autre serveur a
      * repris le joueur est gardée dans un fichier « .superseded », jamais reprise toute seule.
      */
     private void writeUnsavedFile(PlayerInventoryData snapshot, Exception cause) {
@@ -944,7 +944,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             dumpFiles.put(snapshot, DumpRef.of(file));
             if (superseded) {
                 plugin.getLogger().log(Level.SEVERE, "Pages de " + snapshot.getUuid() + " dépassées par un autre serveur (le joueur y a été"
-                    + " repris avant la fin de cette écriture) : gardées dans " + file.getPath() + ", à examiner (/ship recover <fichier> force)", cause);
+                    + " repris avant la fin de cette écriture) : gardées dans " + file.getPath() + ", à examiner (/shinventorypages recover <fichier> force)", cause);
             } else {
                 plugin.getLogger().log(Level.SEVERE, "Base injoignable : pages de " + snapshot.getUuid()
                     + " gardées dans " + file.getPath() + " (reprises à la prochaine connexion)", cause);
@@ -1079,7 +1079,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     }
 
     /**
-     * /ship recover : réécrit en base les pages d'un fichier de secours, pour un joueur hors ligne qui ne s'est pas
+     * /shinventorypages recover : réécrit en base les pages d'un fichier de secours, pour un joueur hors ligne qui ne s'est pas
      * reconnecté depuis (sinon la base est plus récente : refus, sauf « force »). La page courante du fichier n'est
      * pas écrite : elle vit dans l'inventaire enregistré par Minecraft ; la page courante en base devient celle du
      * fichier, celle que représente cet inventaire. En mode réseau, un fichier d'une session dépassée par un autre
@@ -1354,7 +1354,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
 
     /**
      * Écrit la page courante des données dans l'inventaire porté. Un objet enregistré sur l'index du sélecteur
-     * (emplacement changé par un /ship reload) ne peut pas y être posé : il est rendu pour être rangé ailleurs.
+     * (emplacement changé par un /shinventorypages reload) ne peut pas y être posé : il est rendu pour être rangé ailleurs.
      */
     private List<ItemStack> applyCurrentPage(Player player, PlayerInventoryData data) {
         int number = data.getCurrentPage();
@@ -1846,7 +1846,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         if (realItem) storeOrDrop(player, List.of(displaced), "objet trouvé sur l'emplacement du sélecteur");
     }
 
-    /** /ship reload a changé l'emplacement du sélecteur : l'ancien est libéré, le nouveau est posé partout. */
+    /** /shinventorypages reload a changé l'emplacement du sélecteur : l'ancien est libéré, le nouveau est posé partout. */
     public void moveSwitcherSlot(int oldSlot) {
         for (Player player : Bukkit.getOnlinePlayers()) {
             ItemStack old = player.getInventory().getItem(oldSlot);

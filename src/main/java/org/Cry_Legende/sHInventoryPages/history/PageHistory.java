@@ -83,7 +83,7 @@ public final class PageHistory {
         enabled = config.isHistoryEnabled() && plugin.getDatabaseManager().createHistoryTable();
     }
 
-    /** /ship reload : history.enabled relu (la table existe déjà ou est créée à ce moment). */
+    /** /shinventorypages reload : history.enabled relu (la table existe déjà ou est créée à ce moment). */
     public void reload() {
         start();
     }
