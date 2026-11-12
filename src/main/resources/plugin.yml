@@ -6,6 +6,11 @@ author: Cry_Legende
 # SHNetwork et HuskSync sont facultatifs : sans eux, rien ne change (serveur seul). Avec eux, les pages se partagent
 # entre serveurs (voir la section reseau de config.yml).
 softdepend: [PlaceholderAPI, SHNetwork, HuskSync, WorldGuard]
+# Charges par Paper dans le classloader du plugin : HikariCP doit voir le driver MariaDB,
+# que le serveur ne fournit pas (il n'embarque que MySQL et SQLite).
+libraries:
+  - com.zaxxer:HikariCP:5.1.0
+  - org.mariadb.jdbc:mariadb-java-client:3.4.1
 
 commands:
   shinventorypages:

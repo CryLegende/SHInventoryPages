@@ -25,8 +25,8 @@ public class MySQLManager extends SqlDatabase {
     public boolean connect() {
         ConfigManager cfg = plugin.getConfigManager();
         try {
-            // Pilote MySQL fourni par Paper en priorité : celui de MariaDB n'existe que s'il est emprunté à un
-            // autre plugin, et disparaît avec lui
+            // Pilote MySQL fourni par Paper en priorité ; celui de MariaDB vient des libraries: du plugin.yml,
+            // chargé dans le classloader du plugin
             String driver;
             String scheme;
             if (classExists("com.mysql.cj.jdbc.Driver")) {

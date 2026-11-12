@@ -27,39 +27,6 @@
                     <release>${java.version}</release>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.2</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                            <!-- HikariCP déplacé : jamais confondu avec la copie (d'une autre version) d'un autre plugin -->
-                            <relocations>
-                                <relocation>
-                                    <pattern>com.zaxxer.hikari</pattern>
-                                    <shadedPattern>org.Cry_Legende.sHInventoryPages.libs.hikari</shadedPattern>
-                                </relocation>
-                            </relocations>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>META-INF/MANIFEST.MF</exclude>
-                                        <exclude>META-INF/maven/**</exclude>
-                                        <exclude>META-INF/versions/*/module-info.class</exclude>
-                                        <exclude>module-info.class</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
         <resources>
             <resource>
@@ -113,6 +80,7 @@
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
             <version>5.1.0</version>
+            <scope>provided</scope>
             <exclusions>
                 <!-- slf4j est fourni par Paper -->
                 <exclusion>
