@@ -14,6 +14,7 @@ import org.Cry_Legende.sHInventoryPages.inventory.InventoryManager;
 import org.Cry_Legende.sHInventoryPages.listeners.InventoryListener;
 import org.Cry_Legende.sHInventoryPages.listeners.OverflowListener;
 import org.Cry_Legende.sHInventoryPages.listeners.PlayerListener;
+import org.Cry_Legende.sHInventoryPages.menu.PageNameDialog;
 import org.Cry_Legende.sHInventoryPages.menu.PagesMenu;
 import org.Cry_Legende.sHInventoryPages.network.NetworkLink;
 import org.Cry_Legende.sHInventoryPages.network.NetworkSync;
@@ -52,6 +53,7 @@ public final class SHInventoryPages extends JavaPlugin {
     private PageHistory pageHistory;
     private HistoryMenus historyMenus;
     private PagesMenu pagesMenu;
+    private PageNameDialog pageNameDialog;
     private SHPlaceholders placeholders;
     private boolean fullyEnabled;
 
@@ -233,6 +235,7 @@ public final class SHInventoryPages extends JavaPlugin {
         PluginManager pm = getServer().getPluginManager();
         pm.registerEvents(new PlayerListener(this), this);
         this.pagesMenu = new PagesMenu(this);
+        this.pageNameDialog = new PageNameDialog(this);
         pm.registerEvents(pagesMenu, this);
         pm.registerEvents(new InventoryListener(this), this);
         pm.registerEvents(new OverflowListener(this), this);
@@ -339,6 +342,10 @@ public final class SHInventoryPages extends JavaPlugin {
 
     public PagesMenu getPagesMenu() {
         return pagesMenu;
+    }
+
+    public PageNameDialog getPageNameDialog() {
+        return pageNameDialog;
     }
 
     public boolean isFullyEnabled() {

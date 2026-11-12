@@ -42,6 +42,8 @@ public class PlayerInventoryData {
     private final List<ItemStack> strayItems = new ArrayList<>();
     /** Icône choisie par le joueur pour une page : objet d'origine réduit à son apparence. Absente : sélecteur par défaut. */
     private final Map<Integer, ItemStack> icons = new HashMap<>();
+    /** Nom donné par le joueur à une page, affiché tel quel. */
+    private final Map<Integer, String> names = new HashMap<>();
     /** Pages réservées par le joueur : jamais remplies par le rangement automatique (débordement, ramassage, dons). */
     private final Set<Integer> reservedPages = new HashSet<>();
     /** Copie de sauvegarde uniquement : version de chaque page copiée. */
@@ -110,6 +112,16 @@ public class PlayerInventoryData {
     public void setIcon(int pageNumber, ItemStack icon) {
         if (icon == null || icon.isEmpty()) icons.remove(pageNumber);
         else icons.put(pageNumber, icon);
+    }
+
+    /** Nom de la page, ou null. */
+    public String getName(int pageNumber) {
+        return names.get(pageNumber);
+    }
+
+    public void setName(int pageNumber, String name) {
+        if (name == null || name.isBlank()) names.remove(pageNumber);
+        else names.put(pageNumber, name);
     }
 
     public boolean isReserved(int pageNumber) {

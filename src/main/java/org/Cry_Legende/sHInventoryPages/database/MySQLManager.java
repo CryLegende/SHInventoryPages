@@ -108,6 +108,7 @@ public class MySQLManager extends SqlDatabase {
             + "`uuid` VARCHAR(36) NOT NULL,"
             + "`page_number` INT NOT NULL,"
             + "`icon` TEXT,"
+            + "`name` VARCHAR(48),"
             + "`reserved` TINYINT NOT NULL DEFAULT 0,"
             + "PRIMARY KEY(`uuid`,`page_number`)"
             + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
@@ -115,8 +116,8 @@ public class MySQLManager extends SqlDatabase {
 
     @Override
     protected String upsertSettingsSql() {
-        return "INSERT INTO shinventorypages_page_settings (uuid, page_number, icon, reserved) VALUES (?, ?, ?, ?) "
-            + "ON DUPLICATE KEY UPDATE icon = VALUES(icon), reserved = VALUES(reserved)";
+        return "INSERT INTO shinventorypages_page_settings (uuid, page_number, icon, name, reserved) VALUES (?, ?, ?, ?, ?) "
+            + "ON DUPLICATE KEY UPDATE icon = VALUES(icon), name = VALUES(name), reserved = VALUES(reserved)";
     }
 
     @Override

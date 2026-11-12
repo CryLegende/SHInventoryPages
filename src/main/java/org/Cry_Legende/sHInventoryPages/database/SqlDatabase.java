@@ -78,7 +78,7 @@ public abstract class SqlDatabase implements DatabaseManager {
     /** Création de la table shinventorypages_page_settings, dans le dialecte de la base. */
     protected abstract String createSettingsTableSql();
 
-    /** Insère ou remplace les réglages d'une page : paramètres uuid, page_number, icon, reserved. */
+    /** Insère ou remplace les réglages d'une page : paramètres uuid, page_number, icon, name, reserved. */
     protected abstract String upsertSettingsSql();
 
     /** Création de l'index (uuid, reason, id) de shinventorypages_history, ou null s'il est créé avec la table. */
@@ -239,7 +239,7 @@ public abstract class SqlDatabase implements DatabaseManager {
         } catch (SQLException e) {
             settingsTable = false;
             plugin.getLogger().log(Level.SEVERE, "Table shinventorypages_page_settings introuvable et impossible à créer"
-                + " (voir sql/schema.sql) : icônes et pages réservées indisponibles", e);
+                + " (voir sql/schema.sql) : icônes, noms et pages réservées indisponibles", e);
         }
         return settingsTable;
     }
@@ -250,11 +250,11 @@ public abstract class SqlDatabase implements DatabaseManager {
             return withConnection(connection -> {
                 Map<Integer, PageSettingsRow> settings = new HashMap<>();
                 try (PreparedStatement ps = connection.prepareStatement(
-                    "SELECT page_number, icon, reserved FROM shinventorypages_page_settings WHERE uuid = ?")) {
+                    "SELECT page_number, icon, name, reserved FROM shinventorypages_page_settings WHERE uuid = ?")) {
                     ps.setString(1, uuid.toString());
                     try (ResultSet rs = ps.executeQuery()) {
                         while (rs.next()) {
-                            settings.put(rs.getInt(1), new PageSettingsRow(rs.getString(2), rs.getInt(3) != 0));
+                            settings.put(rs.getInt(1), new PageSettingsRow(rs.getString(2), rs.getString(3), rs.getInt(4) != 0));
                         }
                     }
                 }
@@ -289,7 +289,8 @@ public abstract class SqlDatabase implements DatabaseManager {
                 ps.setString(1, uuid.toString());
                 ps.setInt(2, page);
                 ps.setString(3, row.icon());
-                ps.setInt(4, row.reserved() ? 1 : 0);
+                ps.setString(4, row.name());
+                ps.setInt(5, row.reserved() ? 1 : 0);
                 ps.executeUpdate();
             }
             return null;

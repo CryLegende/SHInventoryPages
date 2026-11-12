@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS shinventorypages_page_settings (
     uuid        VARCHAR(36) NOT NULL,
     page_number INT         NOT NULL,
     icon        TEXT,                           -- objet dont la page prend l'apparence (Base64), NULL = sélecteur par défaut
+    name        VARCHAR(48),                    -- nom donné à la page, NULL = aucun
     reserved    TINYINT     NOT NULL DEFAULT 0, -- 1 : page sautée par le rangement automatique
     PRIMARY KEY (uuid, page_number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -66,7 +66,7 @@ public interface DatabaseManager {
         throw new UnsupportedOperationException("Copies de secours en base : mode réseau seulement");
     }
 
-    // ------------------------------------------------------------------ réglages des pages (icône, page réservée)
+    // ------------------------------------------------------------------ réglages des pages (icône, nom, page réservée)
 
     /**
      * Crée la table des réglages de pages si elle n'existe pas. Faux si elle est introuvable et impossible à créer :

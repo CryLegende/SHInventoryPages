@@ -112,6 +112,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     private volatile int switcherSlot;
     private Material switcherMaterial;
     private String switcherName;
+    private String switcherNamedName;
     private List<String> switcherLore;
     private boolean amountEqualsPage;
     private int fixedAmount;
@@ -274,6 +275,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         this.switcherSlot = config.getSwitcherSlot();
         this.switcherMaterial = config.getSwitcherItemMaterial();
         this.switcherName = config.getSwitcherItemName();
+        this.switcherNamedName = config.getSwitcherItemNamedName();
         this.switcherLore = config.getSwitcherItemLore();
         this.amountEqualsPage = config.isAmountEqualsPage();
         this.fixedAmount = config.getFixedAmount();
@@ -1857,7 +1859,8 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         } else if (!pagesOpen(player)) {
             item = createBarrierItem(data.getCurrentPage());
         } else {
-            item = createSwitcherItem(data.getCurrentPage(), data.getMaxPages(), data.getIcon(data.getCurrentPage()));
+            int page = data.getCurrentPage();
+            item = createSwitcherItem(page, data.getMaxPages(), data.getIcon(page), data.getName(page));
         }
         placeInSwitcherSlot(player, item);
     }
@@ -1887,19 +1890,26 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     }
 
     public ItemStack createSwitcherItem(int currentPage, int maxPages) {
-        return createSwitcherItem(currentPage, maxPages, null);
+        return createSwitcherItem(currentPage, maxPages, null, null);
     }
 
     /**
      * Sélecteur de la page {@code currentPage}. Avec une icône, il en prend l'apparence (modèle d'objet, tête) mais
      * reste l'objet de switcher_item.material : aucun plugin, aucune recette, aucune vente ne peut le prendre pour
-     * l'objet qu'il imite. Un client qui ne connaît pas les modèles d'objets voit le sélecteur par défaut.
+     * l'objet qu'il imite. Un client qui ne connaît pas les modèles d'objets voit le sélecteur par défaut. Avec un
+     * nom de page, son nom est celui de switcher_item.name_with_page_name.
      */
-    public ItemStack createSwitcherItem(int currentPage, int maxPages, ItemStack icon) {
+    public ItemStack createSwitcherItem(int currentPage, int maxPages, ItemStack icon, String pageName) {
         ItemStack item = new ItemStack(switcherMaterial);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            meta.displayName(MessageUtil.itemText(format(switcherName, currentPage, maxPages)));
+            if (pageName == null) {
+                meta.displayName(MessageUtil.itemText(format(switcherName, currentPage, maxPages)));
+            } else {
+                // Nom choisi par le joueur : posé tel quel, jamais lu comme un texte à codes couleur
+                meta.displayName(MessageUtil.itemText(format(switcherNamedName, currentPage, maxPages))
+                    .replaceText(builder -> builder.matchLiteral("%page_name%").replacement(net.kyori.adventure.text.Component.text(pageName))));
+            }
             List<String> lore = new ArrayList<>(switcherLore.size());
             for (String line : switcherLore) lore.add(format(line, currentPage, maxPages));
             meta.lore(MessageUtil.itemLines(lore));
@@ -1920,7 +1930,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     }
 
     // =========================================================================
-    //  RÉGLAGES DES PAGES : icône et page réservée, choisis par le joueur
+    //  RÉGLAGES DES PAGES : icône, nom et page réservée, choisis par le joueur
     // =========================================================================
 
     /** Composants gardés d'un objet choisi comme icône : son apparence seule. */
@@ -1958,6 +1968,15 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         if (page == data.getCurrentPage()) updateSwitcherItem(player);
     }
 
+    /** Nomme la page (null : plus de nom). Le nom est contrôlé par l'appelant. */
+    public void setPageName(Player player, int page, String name) {
+        PlayerInventoryData data = cache.get(player.getUniqueId());
+        if (data == null || page < 1 || page > data.getMaxPages()) return;
+        data.setName(page, name);
+        savePageSettings(data, page);
+        if (page == data.getCurrentPage()) updateSwitcherItem(player);
+    }
+
     /** Réserve la page ou la rend au rangement automatique ; rend son nouvel état. */
     public boolean togglePageReserved(Player player, int page) {
         PlayerInventoryData data = cache.get(player.getUniqueId());
@@ -1971,7 +1990,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     private void savePageSettings(PlayerInventoryData data, int page) {
         UUID uuid = data.getUuid();
         ItemStack icon = data.getIcon(page);
-        PageSettingsRow row = new PageSettingsRow(icon != null ? ItemCodec.encodeItem(icon) : null, data.isReserved(page));
+        PageSettingsRow row = new PageSettingsRow(icon != null ? ItemCodec.encodeItem(icon) : null, data.getName(page), data.isReserved(page));
         queueDb(uuid, () -> {
             plugin.getDatabaseManager().savePageSettings(uuid, page, row);
             return null;
@@ -1985,6 +2004,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         for (Map.Entry<Integer, PageSettingsRow> entry : settings.entrySet()) {
             PageSettingsRow row = entry.getValue();
             data.setReserved(entry.getKey(), row.reserved());
+            data.setName(entry.getKey(), row.name());
             if (row.icon() == null || row.icon().isEmpty()) continue;
             try {
                 data.setIcon(entry.getKey(), ItemCodec.decodeItem(row.icon()));

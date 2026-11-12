@@ -285,6 +285,12 @@ public class ConfigManager {
         return config.getString("switcher_item.name", "&bPages d'inventaire &7(&b%current_page%&7/&b%max_pages%&7)");
     }
 
+    /** Nom du sélecteur quand la page portée a un nom (%page_name%). */
+    public String getSwitcherItemNamedName() {
+        return config.getString("switcher_item.name_with_page_name",
+            "&bPages d'inventaire &7(&b%current_page%&7/&b%max_pages%&7) &8· &f%page_name%");
+    }
+
     public List<String> getSwitcherItemLore() {
         return config.getStringList("switcher_item.lore");
     }
@@ -323,6 +329,16 @@ public class ConfigManager {
     /** Objets les plus nombreux d'une page listés dans sa description ; 0 = aucun. */
     public int getMenuPreviewItems() {
         return Math.max(0, config.getInt("menu.preview_items", 3));
+    }
+
+    /** Longueur maximale du nom d'une page. */
+    public int getMenuNameMaxLength() {
+        return Math.max(1, Math.min(48, config.getInt("menu.name_max_length", 24)));
+    }
+
+    /** Version de protocole à partir de laquelle un client connaît les dialogues (1.21.6 : 771). */
+    public int getMenuDialogMinProtocol() {
+        return config.getInt("menu.dialog_min_protocol", 771);
     }
 
     /** Objet d'un élément du menu (menu.materials.&lt;name&gt;). */

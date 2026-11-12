@@ -17,6 +17,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
+import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
@@ -34,12 +35,13 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Menu des pages d'un joueur (/pages, shift + clic sur le sélecteur) : une case par page, clic pour la porter. Avec
- * la personnalisation, chaque page a ses réglages : une icône, prise sur un objet de l'inventaire du joueur (jamais
- * consommé), et la réserve, qui la sort du rangement automatique.
+ * Menu des pages d'un joueur (/pages, shift + clic sur le sélecteur) : une case par page, clic gauche pour la porter.
+ * Le menu reste ouvert et l'inventaire du joueur, affiché en dessous, change de page sous ses yeux et reste utilisable
+ * comme devant un coffre. Avec la personnalisation, un clic droit ouvre les réglages de la page : une icône, prise sur
+ * un objet de l'inventaire du joueur (jamais consommé), un nom, et la réserve, qui la sort du rangement automatique.
  *
- * <p>Le menu ne contient aucun objet du joueur : tous les clics y sont annulés, et l'inventaire du joueur affiché en
- * dessous ne sert qu'à désigner l'objet dont une page prend l'apparence.</p>
+ * <p>Le menu ne contient aucun objet du joueur et aucun ne peut y entrer ni en sortir : tout clic sur ses cases est
+ * annulé, ainsi que ce qui les atteindrait depuis l'inventaire du joueur (shift + clic, double clic, glisser).</p>
  */
 public final class PagesMenu implements Listener {
 
@@ -49,9 +51,10 @@ public final class PagesMenu implements Listener {
     /** Quatre lignes de sept cases au plus, dans le cadre. */
     private static final int MAX_SHOWN = 28;
     private static final int SETTINGS_SIZE = 27;
-    private static final int SLOT_ICON = 11;
-    private static final int SLOT_RESERVED = 13;
-    private static final int SLOT_RESET = 15;
+    private static final int SLOT_ICON = 10;
+    private static final int SLOT_NAME = 12;
+    private static final int SLOT_RESERVED = 14;
+    private static final int SLOT_RESET = 16;
     private static final int SLOT_BACK = 22;
     /** Emplacements d'une page utilisables par le joueur : tous sauf celui du sélecteur. */
     private static final int CAPACITY = PlayerInventoryData.PAGE_SIZE - 1;
@@ -71,17 +74,13 @@ public final class PagesMenu implements Listener {
         final UUID owner;
         /** 0 : liste des pages ; sinon page dont les réglages sont affichés. */
         final int settingsPage;
-        /** Liste en mode personnalisation : un clic ouvre les réglages de la page au lieu de la porter. */
-        boolean customizing;
         /** Case de la liste vers numéro de page. */
         final Map<Integer, Integer> pageSlots = new HashMap<>();
-        int customizeSlot = -1;
         Inventory inventory;
 
-        Menu(UUID owner, int settingsPage, boolean customizing) {
+        Menu(UUID owner, int settingsPage) {
             this.owner = owner;
             this.settingsPage = settingsPage;
-            this.customizing = customizing;
         }
 
         @Override
@@ -95,7 +94,7 @@ public final class PagesMenu implements Listener {
         return !player.isPermissionSet(permission) || player.hasPermission(permission);
     }
 
-    private boolean canCustomize(Player player) {
+    public boolean canCustomize(Player player) {
         return config.isMenuCustomization() && allowed(player, PERMISSION_CUSTOMIZE);
     }
 
@@ -118,14 +117,14 @@ public final class PagesMenu implements Listener {
             MessageUtil.sendMessage(player, config.getMessage("cant_switch_here"));
             return;
         }
-        openList(player, false);
+        openList(player);
         play(player, "open", "ui.toast.in");
     }
 
-    private void openList(Player player, boolean customizing) {
+    private void openList(Player player) {
         PlayerInventoryData data = manager.getPlayerData(player.getUniqueId());
         if (data == null) return;
-        Menu menu = new Menu(player.getUniqueId(), 0, customizing && canCustomize(player));
+        Menu menu = new Menu(player.getUniqueId(), 0);
         int shown = shownPages(data);
         int columns = columns(shown);
         int rows = (shown + columns - 1) / columns;
@@ -134,10 +133,11 @@ public final class PagesMenu implements Listener {
         player.openInventory(menu.inventory);
     }
 
-    private void openSettings(Player player, int page, boolean fromCustomizing) {
+    /** Ouvre les réglages de la page {@code page} (aussi au retour de la saisie de son nom). */
+    public void openSettings(Player player, int page) {
         PlayerInventoryData data = manager.getPlayerData(player.getUniqueId());
-        if (data == null || page < 1 || page > data.getMaxPages()) return;
-        Menu menu = new Menu(player.getUniqueId(), page, fromCustomizing);
+        if (data == null || page < 1 || page > data.getMaxPages() || !canCustomize(player)) return;
+        Menu menu = new Menu(player.getUniqueId(), page);
         menu.inventory = Bukkit.createInventory(menu, SETTINGS_SIZE, MessageUtil.itemText(
             config.getRawMessage("pages_menu_settings_title").replace("%page%", String.valueOf(page))));
         renderSettings(menu, data);
@@ -175,27 +175,21 @@ public final class PagesMenu implements Listener {
             int slot = (row + 1) * 9 + 1 + (7 - inRow) / 2 + index % columns;
             int page = index + 1;
             menu.pageSlots.put(slot, page);
-            inv.setItem(slot, pageItem(data, page, menu.customizing, customize));
-        }
-        menu.customizeSlot = customize ? inv.getSize() - 5 : -1;
-        if (customize) {
-            String key = menu.customizing ? "pages_menu_customize_on" : "pages_menu_customize_off";
-            inv.setItem(menu.customizeSlot, item(config.getMenuMaterial("customize", Material.COMPARATOR),
-                config.getRawMessage(key + "_name"), MessageUtil.itemLines(config.getRawMessageList(key + "_lore")), menu.customizing));
+            inv.setItem(slot, pageItem(data, page, customize));
         }
     }
 
-    private ItemStack pageItem(PlayerInventoryData data, int page, boolean customizing, boolean customize) {
+    private ItemStack pageItem(PlayerInventoryData data, int page, boolean customize) {
         String number = String.valueOf(page);
         if (page > data.getMaxPages()) {
             return item(config.getMenuMaterial("locked_page", Material.GRAY_DYE),
                 config.getRawMessage("pages_menu_locked_name").replace("%page%", number),
-                MessageUtil.itemLines(config.getRawMessageList("pages_menu_locked_lore")), false);
+                MessageUtil.itemLines(config.getRawMessageList("pages_menu_locked_lore")));
         }
         if (data.isLocked(page)) {
             return item(config.getMenuMaterial("unreadable_page", Material.BARRIER),
                 config.getRawMessage("pages_menu_unreadable_name").replace("%page%", number),
-                MessageUtil.itemLines(config.getRawMessageList("pages_menu_unreadable_lore")), false);
+                MessageUtil.itemLines(config.getRawMessageList("pages_menu_unreadable_lore")));
         }
         boolean worn = page == data.getCurrentPage();
         ItemStack[] contents = data.getPage(page);
@@ -220,18 +214,22 @@ public final class PagesMenu implements Listener {
                     .replace("%capacity%", String.valueOf(CAPACITY)).replace("%items%", String.valueOf(items))));
             }
         }
-        if (customizing) {
-            lore.add(MessageUtil.itemText(config.getRawMessage("pages_menu_action_customize_mode")));
-        } else {
-            if (!worn) lore.add(MessageUtil.itemText(config.getRawMessage("pages_menu_action_wear")));
-            if (customize) lore.add(MessageUtil.itemText(config.getRawMessage("pages_menu_action_customize")));
-        }
+        if (!worn) lore.add(MessageUtil.itemText(config.getRawMessage("pages_menu_action_wear")));
+        if (customize) lore.add(MessageUtil.itemText(config.getRawMessage("pages_menu_action_customize")));
         ItemStack icon = data.getIcon(page);
         ItemStack item = icon != null ? icon.clone() : new ItemStack(config.getSwitcherItemMaterial());
         String name = config.getRawMessage(worn ? "pages_menu_page_name_worn" : "pages_menu_page_name").replace("%page%", number);
-        decorate(item, name, lore, worn);
+        String chosen = data.getName(page);
+        Component title = chosen == null ? MessageUtil.itemText(name)
+            : withName(name + config.getRawMessage("pages_menu_page_name_suffix"), chosen);
+        decorate(item, title, lore, worn);
         item.setAmount(Math.max(1, Math.min(page, item.getMaxStackSize())));
         return item;
+    }
+
+    /** Texte du plugin où {@code %name%} devient le nom choisi par le joueur, affiché tel quel. */
+    private static Component withName(String raw, String chosen) {
+        return MessageUtil.itemText(raw).replaceText(builder -> builder.matchLiteral("%name%").replacement(Component.text(chosen)));
     }
 
     /** Vrai si l'emplacement {@code slot} porte un objet du joueur (ni vide, ni le sélecteur). */
@@ -284,21 +282,34 @@ public final class PagesMenu implements Listener {
         String number = String.valueOf(page);
         ItemStack icon = data.getIcon(page);
         ItemStack shown = icon != null ? icon.clone() : new ItemStack(config.getSwitcherItemMaterial());
-        decorate(shown, config.getRawMessage("pages_menu_icon_name").replace("%page%", number),
+        decorate(shown, MessageUtil.itemText(config.getRawMessage("pages_menu_icon_name").replace("%page%", number)),
             MessageUtil.itemLines(config.getRawMessageList("pages_menu_icon_lore")), false);
         inv.setItem(SLOT_ICON, shown);
+
+        String chosen = data.getName(page);
+        List<Component> nameLore = new ArrayList<>();
+        for (String line : config.getRawMessageList("pages_menu_name_lore")) {
+            if (!line.trim().equals("%current%")) {
+                nameLore.add(MessageUtil.itemText(line));
+            } else if (chosen == null) {
+                nameLore.add(MessageUtil.itemText(config.getRawMessage("pages_menu_name_none")));
+            } else {
+                nameLore.add(withName(config.getRawMessage("pages_menu_name_current"), chosen));
+            }
+        }
+        inv.setItem(SLOT_NAME, item(config.getMenuMaterial("name", Material.NAME_TAG),
+            config.getRawMessage("pages_menu_name_name").replace("%page%", number), nameLore));
 
         boolean reserved = data.isReserved(page);
         String key = reserved ? "pages_menu_reserved_on" : "pages_menu_reserved_off";
         inv.setItem(SLOT_RESERVED, item(config.getMenuMaterial(reserved ? "reserved_on" : "reserved_off", reserved ? Material.LIME_DYE : Material.GRAY_DYE),
-            config.getRawMessage(key + "_name"), MessageUtil.itemLines(config.getRawMessageList("pages_menu_reserved_lore")), false));
+            config.getRawMessage(key + "_name"), MessageUtil.itemLines(config.getRawMessageList("pages_menu_reserved_lore"))));
 
         if (icon != null) {
             inv.setItem(SLOT_RESET, item(config.getMenuMaterial("reset_icon", Material.BARRIER),
-                config.getRawMessage("pages_menu_reset_name"), MessageUtil.itemLines(config.getRawMessageList("pages_menu_reset_lore")), false));
+                config.getRawMessage("pages_menu_reset_name"), MessageUtil.itemLines(config.getRawMessageList("pages_menu_reset_lore"))));
         }
-        inv.setItem(SLOT_BACK, item(config.getMenuMaterial("back", Material.PAPER),
-            config.getRawMessage("pages_menu_back_name"), List.of(), false));
+        inv.setItem(SLOT_BACK, item(config.getMenuMaterial("back", Material.PAPER), config.getRawMessage("pages_menu_back_name"), List.of()));
     }
 
     /** Cadre du menu et fond de ses cases libres, sans infobulle. */
@@ -321,16 +332,16 @@ public final class PagesMenu implements Listener {
         return item;
     }
 
-    private static ItemStack item(Material material, String name, List<Component> lore, boolean glint) {
+    private static ItemStack item(Material material, String name, List<Component> lore) {
         ItemStack item = new ItemStack(material);
-        decorate(item, name, lore, glint);
+        decorate(item, MessageUtil.itemText(name), lore, false);
         return item;
     }
 
-    private static void decorate(ItemStack item, String name, List<Component> lore, boolean glint) {
+    private static void decorate(ItemStack item, Component name, List<Component> lore, boolean glint) {
         ItemMeta meta = item.getItemMeta();
         if (meta == null) return;
-        meta.displayName(MessageUtil.itemText(name));
+        meta.displayName(name);
         meta.lore(lore.isEmpty() ? null : lore);
         if (glint) meta.setEnchantmentGlintOverride(true);
         meta.addItemFlags(ItemFlag.values());
@@ -344,47 +355,49 @@ public final class PagesMenu implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onClick(InventoryClickEvent event) {
         if (!(event.getView().getTopInventory().getHolder(false) instanceof Menu menu)) return;
+        Inventory clicked = event.getClickedInventory();
+        boolean top = clicked == event.getView().getTopInventory();
+        if (menu.settingsPage == 0 && !top) {
+            // Devant la liste, l'inventaire du joueur s'utilise comme devant un coffre, sauf ce qui atteindrait les
+            // cases du menu : shift + clic (envoi vers le menu) et double clic (ramassage de toutes les piles)
+            InventoryAction action = event.getAction();
+            if (event.isShiftClick() || action == InventoryAction.MOVE_TO_OTHER_INVENTORY || action == InventoryAction.COLLECT_TO_CURSOR) {
+                event.setCancelled(true);
+            }
+            return;
+        }
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player) || !player.getUniqueId().equals(menu.owner)) return;
         // Clics simples seulement : un double clic ou une touche ne déclenche jamais deux actions
         ClickType click = event.getClick();
         if (click == ClickType.DOUBLE_CLICK || (!click.isLeftClick() && !click.isRightClick())) return;
-        Inventory clicked = event.getClickedInventory();
         if (clicked == null) return;
         PlayerInventoryData data = manager.getPlayerData(player.getUniqueId());
         if (data == null) {
             closeLater(player);
             return;
         }
-        boolean top = clicked == event.getView().getTopInventory();
         if (menu.settingsPage > 0) {
             settingsClick(player, menu, data, event, top);
-        } else if (top) {
+        } else {
             listClick(player, menu, data, event.getRawSlot(), click.isRightClick());
         }
     }
 
     private void listClick(Player player, Menu menu, PlayerInventoryData data, int slot, boolean rightClick) {
-        if (slot == menu.customizeSlot) {
-            menu.customizing = !menu.customizing;
-            renderList(player, menu, data);
-            play(player, "navigate", "entity.bat.takeoff");
-            return;
-        }
         Integer page = menu.pageSlots.get(slot);
         if (page == null) return;
         if (!data.isAccessible(page)) {
             play(player, "deny", "entity.zombie.break_wooden_door");
             return;
         }
-        if (canCustomize(player) && (menu.customizing || rightClick)) {
-            boolean customizing = menu.customizing;
-            later(player, online -> openSettings(online, page, customizing));
+        if (rightClick && canCustomize(player)) {
+            later(player, online -> openSettings(online, page));
             play(player, "navigate", "entity.bat.takeoff");
             return;
         }
-        // Page déjà portée : rien à changer, le menu se ferme sur elle
-        if (page == data.getCurrentPage() || manager.switchToPage(player, page)) closeLater(player);
+        // Le menu reste ouvert : l'inventaire affiché en dessous devient celui de la page (voir onPageSwitch)
+        if (!rightClick && page != data.getCurrentPage()) manager.switchToPage(player, page);
     }
 
     private void settingsClick(Player player, Menu menu, PlayerInventoryData data, InventoryClickEvent event, boolean top) {
@@ -407,6 +420,11 @@ public final class PagesMenu implements Listener {
             return;
         }
         switch (event.getRawSlot()) {
+            case SLOT_NAME -> later(player, online -> {
+                if (plugin.getPageNameDialog().open(online, page)) return;
+                play(online, "deny", "entity.zombie.break_wooden_door");
+                MessageUtil.sendMessage(online, config.getMessage("pages_name_unsupported"));
+            });
             case SLOT_RESERVED -> {
                 manager.togglePageReserved(player, page);
                 renderSettings(menu, data);
@@ -419,8 +437,7 @@ public final class PagesMenu implements Listener {
                 play(player, "success", "entity.horse.armor");
             }
             case SLOT_BACK -> {
-                boolean customizing = menu.customizing;
-                later(player, online -> openList(online, customizing));
+                later(player, this::openList);
                 play(player, "navigate", "entity.bat.takeoff");
             }
             default -> {
@@ -430,10 +447,22 @@ public final class PagesMenu implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onDrag(InventoryDragEvent event) {
-        if (event.getView().getTopInventory().getHolder(false) instanceof Menu) event.setCancelled(true);
+        if (!(event.getView().getTopInventory().getHolder(false) instanceof Menu menu)) return;
+        if (menu.settingsPage > 0) {
+            event.setCancelled(true);
+            return;
+        }
+        // Devant la liste : glisser permis dans l'inventaire du joueur, jamais sur une case du menu
+        int topSize = event.getView().getTopInventory().getSize();
+        for (int rawSlot : event.getRawSlots()) {
+            if (rawSlot < topSize) {
+                event.setCancelled(true);
+                return;
+            }
+        }
     }
 
-    /** Page changée par le sélecteur pendant que la liste est ouverte : la page portée affichée suit. */
+    /** Page changée (clic du menu, sélecteur, touche) pendant que la liste est ouverte : la page portée affichée suit. */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPageSwitch(PlayerPageSwitchEvent event) {
         Player player = event.getPlayer();

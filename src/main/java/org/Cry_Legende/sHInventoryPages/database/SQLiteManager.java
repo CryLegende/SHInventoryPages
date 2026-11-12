@@ -88,14 +88,14 @@ public class SQLiteManager extends SqlDatabase {
     @Override
     protected String createSettingsTableSql() {
         return "CREATE TABLE IF NOT EXISTS shinventorypages_page_settings ("
-            + "uuid VARCHAR(36) NOT NULL, page_number INTEGER NOT NULL, icon TEXT, reserved INTEGER NOT NULL DEFAULT 0,"
+            + "uuid VARCHAR(36) NOT NULL, page_number INTEGER NOT NULL, icon TEXT, name VARCHAR(48), reserved INTEGER NOT NULL DEFAULT 0,"
             + " PRIMARY KEY (uuid, page_number));";
     }
 
     @Override
     protected String upsertSettingsSql() {
-        return "INSERT INTO shinventorypages_page_settings (uuid, page_number, icon, reserved) VALUES (?, ?, ?, ?) "
-            + "ON CONFLICT(uuid, page_number) DO UPDATE SET icon = excluded.icon, reserved = excluded.reserved";
+        return "INSERT INTO shinventorypages_page_settings (uuid, page_number, icon, name, reserved) VALUES (?, ?, ?, ?, ?) "
+            + "ON CONFLICT(uuid, page_number) DO UPDATE SET icon = excluded.icon, name = excluded.name, reserved = excluded.reserved";
     }
 
     @Override

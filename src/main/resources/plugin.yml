@@ -5,7 +5,7 @@ api-version: '1.21'
 author: Cry_Legende
 # SHNetwork et HuskSync sont facultatifs : sans eux, rien ne change (serveur seul). Avec eux, les pages se partagent
 # entre serveurs (voir la section reseau de config.yml).
-softdepend: [PlaceholderAPI, SHNetwork, HuskSync, WorldGuard]
+softdepend: [PlaceholderAPI, SHNetwork, HuskSync, WorldGuard, ViaVersion]
 # Charges par Paper dans le classloader du plugin : HikariCP doit voir le driver MariaDB,
 # que le serveur ne fournit pas (il n'embarque que MySQL et SQLite).
 libraries:
@@ -64,7 +64,7 @@ permissions:
     description: Opens the pages menu (/pages, shift-click on the switcher) and wears a page directly (/pages <number>).
     default: true
   shinventorypages.menu.customize:
-    description: Picks an icon for each page and reserves pages, from the pages menu.
+    description: Picks an icon and a name for each page and reserves pages, from the pages menu.
     default: true
   shinventorypages.pages.*:
     description: Wildcard for page amount permissions (e.g., shinventorypages.pages.5).

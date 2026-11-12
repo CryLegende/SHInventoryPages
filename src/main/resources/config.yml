@@ -4,15 +4,15 @@
 # Pages d'inventaire supplémentaires par joueur, nombre selon la permission shinventorypages.pages.<n>, rangées en
 # base de données ; débordement des objets donnés à un joueur à inventaire plein vers ses autres pages ; ramassage
 # vers les autres pages quand l'inventaire porté est plein ; historique de toutes les pages pour le staff ; menu des
-# pages du joueur (page portée en un clic, icône et réserve de chaque page).
+# pages du joueur (page portée en un clic, icône, nom et réserve de chaque page).
 #
 # Sélecteur : clic droit = page suivante, clic gauche = page précédente, shift + clic = menu des pages, touche 1 à 9
 # au survol = page de ce numéro.
 #
 # Commandes des joueurs :
-#   /pages (alias /page)                          Menu des pages : une case par page, clic pour la porter
-#                                                 (shinventorypages.menu) ; clic droit sur une page, ou bouton du bas :
-#                                                 icône et réserve de la page (shinventorypages.menu.customize)
+#   /pages (alias /page)                          Menu des pages : une case par page, clic gauche pour la porter
+#                                                 (shinventorypages.menu) ; clic droit sur une page : son icône,
+#                                                 son nom et sa réserve (shinventorypages.menu.customize)
 #   /pages <numéro>                               Porte directement cette page (shinventorypages.menu)
 #
 # Commandes d'administration (racine /shinventorypages, alias /ship) :
@@ -130,6 +130,8 @@ overflow:
 switcher_item:
   material: "PAPER"
   name: '&bPages d''inventaire &7(&b%current_page%&7/&b%max_pages%&7)'
+  # Nom quand le joueur a nommé la page portée (%page_name%)
+  name_with_page_name: '&bPages d''inventaire &7(&b%current_page%&7/&b%max_pages%&7) &8· &f%page_name%'
   lore:
     - ""
     - "&7 Débloquez des pages de l'inventaire"
@@ -147,7 +149,9 @@ switcher_item:
   enchant_glow: true
 
 # Menu des pages : /pages, ou shift + clic sur le sélecteur. Une case par page (28 au plus), avec ses emplacements
-# occupés et ses objets les plus nombreux ; un clic porte la page et ferme le menu. Les textes sont dans messages.yml.
+# occupés et ses objets les plus nombreux ; un clic gauche porte la page. Le menu reste ouvert : l'inventaire du
+# joueur, affiché en dessous, devient celui de la page et s'utilise comme devant un coffre. Les textes sont dans
+# messages.yml.
 menu:
   # false : ni menu ni /pages ; shift + clic sur le sélecteur change alors de page comme un clic simple
   enabled: true
@@ -157,20 +161,26 @@ menu:
   show_locked_pages: true
   # Objets les plus nombreux de chaque page listés dans sa description (0 = aucun)
   preview_items: 3
-  # Réglages de chaque page par le joueur (clic droit sur une page, ou bouton du bas) :
+  # Réglages de chaque page par le joueur (clic droit sur une page) :
   #   - icône : un objet de son inventaire, jamais consommé. Le sélecteur en prend l'apparence quand la page est
   #     portée, tout en restant l'objet de switcher_item.material (rien ne peut le vendre, le fabriquer ou le
   #     compter comme l'objet imité). Un client antérieur à la 1.21.4 voit le sélecteur par défaut.
+  #   - nom : saisi dans un dialogue (clients 1.21.6 et plus), affiché sur le sélecteur et dans le menu, tel quel
+  #     (pas de codes couleur) ; son joueur est le seul à le voir.
   #   - page réservée : le rangement automatique (débordement, ramassage vers les pages, dons des plugins) la saute
   #     tant qu'elle n'est pas portée.
   customization: true
+  # Longueur maximale du nom d'une page (48 au plus)
+  name_max_length: 24
+  # Version de protocole à partir de laquelle un client reçoit le dialogue du nom (771 = 1.21.6)
+  dialog_min_protocol: 771
   materials:
     frame: "BLACK_STAINED_GLASS_PANE"
     filler: "GRAY_STAINED_GLASS_PANE"
     locked_page: "GRAY_DYE"
     # Page dont la ligne en base est illisible (voir /shinventorypages info)
     unreadable_page: "BARRIER"
-    customize: "COMPARATOR"
+    name: "NAME_TAG"
     reserved_on: "LIME_DYE"
     reserved_off: "GRAY_DYE"
     reset_icon: "BARRIER"
