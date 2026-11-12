@@ -3,6 +3,8 @@ package org.Cry_Legende.sHInventoryPages.listeners;
 import org.Cry_Legende.sHInventoryPages.SHInventoryPages;
 import org.Cry_Legende.sHInventoryPages.config.ConfigManager;
 import org.Cry_Legende.sHInventoryPages.inventory.InventoryManager;
+import org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData;
+import org.Cry_Legende.sHInventoryPages.menu.PagesMenu;
 import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
@@ -115,11 +117,43 @@ public class InventoryListener implements Listener {
             return;
         }
         switch (event.getClick()) {
-            case RIGHT, SHIFT_RIGHT -> manager.switchPage(player, true);
-            case LEFT, SHIFT_LEFT -> manager.switchPage(player, false);
+            case RIGHT -> manager.switchPage(player, true);
+            case LEFT -> manager.switchPage(player, false);
+            case SHIFT_RIGHT -> openMenu(player, true);
+            case SHIFT_LEFT -> openMenu(player, false);
+            // Le client n'envoie le clic molette qu'en mode créatif
+            case MIDDLE -> openMenu(player, null);
+            case NUMBER_KEY -> wearPage(player, event.getHotbarButton() + 1);
             default -> {
             }
         }
+    }
+
+    /** Shift + clic : menu des pages ; sans menu (désactivé, permission refusée), page suivante ou précédente comme un clic. */
+    private void openMenu(Player player, Boolean next) {
+        if (!config.isMenuEnabled() || !PagesMenu.allowed(player, PagesMenu.PERMISSION)) {
+            if (next != null) manager.switchPage(player, next);
+            return;
+        }
+        UUID uuid = player.getUniqueId();
+        // Au tick suivant : un inventaire ne s'ouvre pas pendant le traitement d'un clic
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            Player online = Bukkit.getPlayer(uuid);
+            if (online != null) plugin.getPagesMenu().open(online);
+        });
+    }
+
+    /** Touche 1 à 9 au survol du sélecteur : page de ce numéro. */
+    private void wearPage(Player player, int page) {
+        // Le client a déjà échangé les deux emplacements à l'écran : l'état du serveur lui est renvoyé
+        resyncLater(player);
+        if (!config.isMenuNumberKeys()) return;
+        PlayerInventoryData data = manager.getPlayerData(player.getUniqueId());
+        if (data != null && !data.isAccessible(page)) {
+            manager.playFailSound(player);
+            return;
+        }
+        manager.switchToPage(player, page);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)

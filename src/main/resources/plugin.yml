@@ -17,6 +17,10 @@ commands:
     description: Main command for SHInventoryPages.
     usage: /shinventorypages <reload|saveall|info <joueur>|recover <fichier> [force]|history <joueur>>
     aliases: [ship]
+  pages:
+    description: Opens the inventory pages menu, or wears a page directly.
+    usage: /pages [numéro]
+    aliases: [page]
 
 permissions:
   shinventorypages.*:
@@ -26,6 +30,8 @@ permissions:
       shinventorypages.history: true
       shinventorypages.history.restore: true
       shinventorypages.pages.*: true
+      shinventorypages.menu: true
+      shinventorypages.menu.customize: true
   shinventorypages.admin:
     description: All the administration subcommands of /shinventorypages.
     default: op
@@ -54,6 +60,12 @@ permissions:
     default: op
     children:
       shinventorypages.history: true
+  shinventorypages.menu:
+    description: Opens the pages menu (/pages, shift-click on the switcher) and wears a page directly (/pages <number>).
+    default: true
+  shinventorypages.menu.customize:
+    description: Picks an icon for each page and reserves pages, from the pages menu.
+    default: true
   shinventorypages.pages.*:
     description: Wildcard for page amount permissions (e.g., shinventorypages.pages.5).
     default: false # Ne pas donner par défaut

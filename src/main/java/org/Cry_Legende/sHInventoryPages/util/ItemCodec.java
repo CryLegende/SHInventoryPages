@@ -112,6 +112,20 @@ public final class ItemCodec {
         }
     }
 
+    /** Encode un seul objet (icône d'une page) : Base64 de {@link ItemStack#serializeAsBytes()}. */
+    public static String encodeItem(ItemStack item) {
+        return Base64.getEncoder().encodeToString(item.serializeAsBytes());
+    }
+
+    /** Décode un objet encodé par {@link #encodeItem} ; une donnée illisible lève une exception. */
+    public static ItemStack decodeItem(String stored) throws IOException {
+        try {
+            return ItemStack.deserializeBytes(Base64.getDecoder().decode(stored));
+        } catch (RuntimeException e) {
+            throw new IOException("Objet illisible", e);
+        }
+    }
+
     private static ItemStack decodeNative(byte[] data, int slot) throws IOException {
         try {
             return ItemStack.deserializeBytes(data);

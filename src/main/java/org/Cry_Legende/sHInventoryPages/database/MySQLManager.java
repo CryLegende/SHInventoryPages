@@ -103,6 +103,23 @@ public class MySQLManager extends SqlDatabase {
     }
 
     @Override
+    protected String createSettingsTableSql() {
+        return "CREATE TABLE IF NOT EXISTS `shinventorypages_page_settings` ("
+            + "`uuid` VARCHAR(36) NOT NULL,"
+            + "`page_number` INT NOT NULL,"
+            + "`icon` TEXT,"
+            + "`reserved` TINYINT NOT NULL DEFAULT 0,"
+            + "PRIMARY KEY(`uuid`,`page_number`)"
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+    }
+
+    @Override
+    protected String upsertSettingsSql() {
+        return "INSERT INTO shinventorypages_page_settings (uuid, page_number, icon, reserved) VALUES (?, ?, ?, ?) "
+            + "ON DUPLICATE KEY UPDATE icon = VALUES(icon), reserved = VALUES(reserved)";
+    }
+
+    @Override
     protected String createHistoryTableSql() {
         return "CREATE TABLE IF NOT EXISTS `shinventorypages_history` ("
             + "`id` BIGINT NOT NULL AUTO_INCREMENT,"

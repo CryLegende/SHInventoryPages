@@ -101,3 +101,75 @@ history_restore_busy: "&7&l« &c&lSH &8&l» &7Les pages de &c%player% &7sont en 
 history_restore_failed: "&7&l« &c&lSH &8&l» &7Restauration &céchouée&7. &cVérifiez la console&7."
 history_copied: "&7&l« &a&lSH &8&l» &7Copie de &a%amount%x %item% &7ajoutée à votre inventaire."
 history_copy_no_room: "&7&l« &c&lSH &8&l» &7Votre inventaire est &cplein&7."
+
+# /pages [numéro]
+pages_usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/pages &7[&enuméro&7]"
+pages_unknown_page: "&7&l« &c&lSH &8&l» &7Vous n'avez pas de page &c%page% &7: vos pages vont de &c1 &7à &c%max_pages%&7."
+
+# Menu des pages (/pages, shift + clic sur le sélecteur). %page% = numéro de la page.
+pages_menu_title: "&8&lMenu &8| Pages d'inventaire"
+pages_menu_page_name: "&bPage %page%"
+pages_menu_page_name_worn: "&bPage %page% &7(portée)"
+# %slots% (emplacements occupés), %capacity% (emplacements d'une page), %items% (objets). Deux lignes spéciales :
+# %contents% devient la liste des objets les plus nombreux, %reserved% la ligne pages_menu_page_reserved si la page
+# est réservée (rien sinon).
+pages_menu_page_lore:
+  - ""
+  - "&7&l« &f&lContenu &8&l»"
+  - "&8• &7Emplacements: &e%slots%&7/&e%capacity%"
+  - "%contents%"
+  - "%reserved%"
+  - ""
+# %amount% (quantité), %item% (nom de l'objet, dans la langue du joueur)
+pages_menu_content_line: "&8• &e%amount%x &7%item%"
+# %count% = autres sortes d'objets non listées
+pages_menu_content_more: "&8• &7et &e%count% &7autre(s) sorte(s) d'objets"
+pages_menu_content_empty: "&8• &7Page vide"
+pages_menu_page_reserved: "&8• &6Page réservée"
+pages_menu_action_wear: "&7&o(( &a&oClic gauche pour porter cette page &7&o))"
+pages_menu_action_customize: "&7&o(( &a&oClic droit pour la personnaliser &7&o))"
+# Liste en mode personnalisation (bouton du bas)
+pages_menu_action_customize_mode: "&7&o(( &a&oCliquez pour la personnaliser &7&o))"
+pages_menu_locked_name: "&cPage %page% &7(verrouillée)"
+pages_menu_locked_lore:
+  - ""
+  - "&8&l« &7Se débloque en complétant des quêtes &8&l»"
+pages_menu_unreadable_name: "&4Page %page% &7(illisible)"
+pages_menu_unreadable_lore:
+  - ""
+  - "&8&l« &7Contactez un membre du staff &8&l»"
+pages_menu_customize_off_name: "&ePersonnaliser mes pages"
+pages_menu_customize_off_lore:
+  - ""
+  - "&8&l« &7Icône et réserve de chaque page &8&l»"
+  - ""
+  - "&7&o(( &a&oCliquez, puis choisissez une page &7&o))"
+pages_menu_customize_on_name: "&ePersonnalisation &7(en cours)"
+pages_menu_customize_on_lore:
+  - ""
+  - "&8&l« &7Choisissez la page à personnaliser &8&l»"
+  - ""
+  - "&7&o(( &a&oCliquez pour revenir aux pages &7&o))"
+
+# Réglages d'une page
+pages_menu_settings_title: "&8&lPages &8| Page %page%"
+pages_menu_icon_name: "&bIcône de la page %page%"
+pages_menu_icon_lore:
+  - ""
+  - "&8&l« &7Objet affiché à la place du papier &8&l»"
+  - ""
+  - "&7&o(( &a&oCliquez sur un objet de votre inventaire &7&o))"
+  - "&7&o(( &a&oIl n'est pas consommé &7&o))"
+pages_menu_reserved_on_name: "&6Page réservée &7: &aOui"
+pages_menu_reserved_off_name: "&6Page réservée &7: &cNon"
+pages_menu_reserved_lore:
+  - ""
+  - "&8&l« &7Aucun objet n'y est rangé tout seul &8&l»"
+  - "&8&l« &7quand votre inventaire est plein &8&l»"
+  - ""
+  - "&7&o(( &a&oCliquez pour changer &7&o))"
+pages_menu_reset_name: "&cIcône par défaut"
+pages_menu_reset_lore:
+  - ""
+  - "&7&o(( &a&oCliquez pour remettre le papier &7&o))"
+pages_menu_back_name: "&c⤾ Retour &7(Clic)"

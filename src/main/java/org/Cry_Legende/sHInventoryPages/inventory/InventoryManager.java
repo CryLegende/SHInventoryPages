@@ -8,12 +8,16 @@ import org.Cry_Legende.sHInventoryPages.config.ConfigManager;
 import org.Cry_Legende.sHInventoryPages.database.DatabaseManager;
 import org.Cry_Legende.sHInventoryPages.database.NetworkDump;
 import org.Cry_Legende.sHInventoryPages.database.NetworkLoad;
+import org.Cry_Legende.sHInventoryPages.database.PageSettingsRow;
 import org.Cry_Legende.sHInventoryPages.database.SessionSupersededException;
 import org.Cry_Legende.sHInventoryPages.history.PageHistory;
 import org.Cry_Legende.sHInventoryPages.network.NetworkSync;
 import org.Cry_Legende.sHInventoryPages.protection.PickupRules;
 import org.Cry_Legende.sHInventoryPages.util.ItemCodec;
 import org.Cry_Legende.sHInventoryPages.util.MessageUtil;
+import io.papermc.paper.datacomponent.DataComponentType;
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import net.kyori.adventure.key.Key;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
@@ -54,6 +58,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.IntConsumer;
+import java.util.function.ToIntFunction;
 import java.util.logging.Level;
 
 import static org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData.PAGE_SIZE;
@@ -505,6 +510,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
                 + data.lockedPagesView());
         }
         data.setMaxPages(maxPages);
+        applyPageSettings(data, plugin.getDatabaseManager().takePageSettings(uuid));
         int strayInterface = data.removeStoredItems(this::isSwitcherItem);
         if (strayInterface > 0) {
             plugin.getLogger().info(strayInterface + " sélecteur(s) retiré(s) des pages enregistrées de " + player.getName());
@@ -1284,37 +1290,52 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     //  CHANGEMENT DE PAGE
     // =========================================================================
 
+    /** Page suivante ou précédente, dans l'ordre du sélecteur. */
     public void switchPage(Player player, boolean next) {
+        switchPage(player, data -> data.nextAccessiblePage(data.getCurrentPage(), next));
+    }
+
+    /**
+     * Porte directement la page {@code page} (menu des pages, touche numérique sur le sélecteur, /pages).
+     *
+     * @return vrai si le joueur porte maintenant cette page
+     */
+    public boolean switchToPage(Player player, int page) {
+        return switchPage(player, data -> data.isAccessible(page) ? page : -1);
+    }
+
+    /** Vrai si le joueur a changé de page ; {@code targetOf} rend la page voulue, lue après la capture de l'inventaire. */
+    private boolean switchPage(Player player, ToIntFunction<PlayerInventoryData> targetOf) {
         UUID uuid = player.getUniqueId();
         PlayerInventoryData data = cache.get(uuid);
         if (data == null) {
             MessageUtil.sendMessage(player, config.getMessage("data_loading"));
             updateSwitcherItem(player);
-            return;
+            return false;
         }
-        if (switching.contains(uuid)) return;
+        if (switching.contains(uuid)) return false;
         if (!pagesOpen(player)) {
             playSound(player, failSound, soundVolume, soundPitch);
             MessageUtil.sendMessage(player, config.getMessage("cant_switch_here"));
             updateSwitcherItem(player);
-            return;
+            return false;
         }
         int now = Bukkit.getCurrentTick();
         Integer last = lastSwitchTick.get(uuid);
-        if (last != null && now - last < switchCooldownTicks) return;
+        if (last != null && now - last < switchCooldownTicks) return false;
 
         // Capture d'abord : une restauration d'inventaire par un autre plugin change la page portée
         int before = data.getCurrentPage();
         captureLive(player, data);
         if (data.getCurrentPage() != before) {
             updateSwitcherItem(player);
-            return;
+            return false;
         }
         int current = data.getCurrentPage();
-        int target = data.nextAccessiblePage(current, next);
+        int target = targetOf.applyAsInt(data);
         if (target < 0 || target == current) {
             updateSwitcherItem(player);
-            return;
+            return false;
         }
         lastSwitchTick.put(uuid, now);
 
@@ -1322,7 +1343,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         Bukkit.getPluginManager().callEvent(event);
         if (event.isCancelled() || cache.get(uuid) != data || data.getCurrentPage() != current || !player.isOnline()) {
             updateSwitcherItem(player);
-            return;
+            return false;
         }
 
         List<ItemStack> leftovers;
@@ -1350,6 +1371,16 @@ public class InventoryManager implements ISHInventoryPagesAPI {
             alignedSave(player, data);
         }
         playSound(player, switchSound, soundVolume, soundPitch);
+        return true;
+    }
+
+    /** Vrai si le joueur peut changer de page ici et maintenant (pages chargées, ni monde interdit ni blocage). */
+    public boolean canSwitchPages(Player player) {
+        return cache.containsKey(player.getUniqueId()) && pagesOpen(player);
+    }
+
+    public void playFailSound(Player player) {
+        playSound(player, failSound, soundVolume, soundPitch);
     }
 
     /**
@@ -1826,7 +1857,7 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         } else if (!pagesOpen(player)) {
             item = createBarrierItem(data.getCurrentPage());
         } else {
-            item = createSwitcherItem(data.getCurrentPage(), data.getMaxPages());
+            item = createSwitcherItem(data.getCurrentPage(), data.getMaxPages(), data.getIcon(data.getCurrentPage()));
         }
         placeInSwitcherSlot(player, item);
     }
@@ -1856,6 +1887,15 @@ public class InventoryManager implements ISHInventoryPagesAPI {
     }
 
     public ItemStack createSwitcherItem(int currentPage, int maxPages) {
+        return createSwitcherItem(currentPage, maxPages, null);
+    }
+
+    /**
+     * Sélecteur de la page {@code currentPage}. Avec une icône, il en prend l'apparence (modèle d'objet, tête) mais
+     * reste l'objet de switcher_item.material : aucun plugin, aucune recette, aucune vente ne peut le prendre pour
+     * l'objet qu'il imite. Un client qui ne connaît pas les modèles d'objets voit le sélecteur par défaut.
+     */
+    public ItemStack createSwitcherItem(int currentPage, int maxPages, ItemStack icon) {
         ItemStack item = new ItemStack(switcherMaterial);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
@@ -1871,7 +1911,87 @@ public class InventoryManager implements ISHInventoryPagesAPI {
         }
         int amount = amountEqualsPage ? currentPage : fixedAmount;
         item.setAmount(Math.max(1, Math.min(amount, item.getMaxStackSize())));
+        if (icon != null && !icon.isEmpty()) {
+            Key model = icon.getData(DataComponentTypes.ITEM_MODEL);
+            item.setData(DataComponentTypes.ITEM_MODEL, model != null ? model : icon.getType().getKey());
+            item.copyDataFrom(icon, InventoryManager::isIconDetail);
+        }
         return item;
+    }
+
+    // =========================================================================
+    //  RÉGLAGES DES PAGES : icône et page réservée, choisis par le joueur
+    // =========================================================================
+
+    /** Composants gardés d'un objet choisi comme icône : son apparence seule. */
+    private static boolean isIconComponent(DataComponentType type) {
+        return type == DataComponentTypes.ITEM_MODEL || isIconDetail(type);
+    }
+
+    /** Apparence qui dépend d'un autre composant que le modèle : texture d'une tête, variante d'un pack de ressources. */
+    private static boolean isIconDetail(DataComponentType type) {
+        return type == DataComponentTypes.PROFILE || type == DataComponentTypes.CUSTOM_MODEL_DATA;
+    }
+
+    /** Vrai si le joueur peut prendre cet objet comme icône de page. */
+    public boolean canBeIcon(ItemStack source) {
+        return source != null && !source.isEmpty() && source.getType().isItem() && !isSwitcherItem(source)
+            && source.getType() != barrierMaterial;
+    }
+
+    /**
+     * Donne à la page {@code page} l'apparence de {@code source} (null : icône par défaut). L'objet n'est ni pris ni
+     * copié : seuls son type et son apparence sont retenus.
+     */
+    public void setPageIcon(Player player, int page, ItemStack source) {
+        PlayerInventoryData data = cache.get(player.getUniqueId());
+        if (data == null || page < 1 || page > data.getMaxPages()) return;
+        if (source == null) {
+            data.setIcon(page, null);
+        } else {
+            if (!canBeIcon(source)) return;
+            ItemStack icon = new ItemStack(source.getType());
+            icon.copyDataFrom(source, InventoryManager::isIconComponent);
+            data.setIcon(page, icon);
+        }
+        savePageSettings(data, page);
+        if (page == data.getCurrentPage()) updateSwitcherItem(player);
+    }
+
+    /** Réserve la page ou la rend au rangement automatique ; rend son nouvel état. */
+    public boolean togglePageReserved(Player player, int page) {
+        PlayerInventoryData data = cache.get(player.getUniqueId());
+        if (data == null || page < 1 || page > data.getMaxPages()) return false;
+        boolean reserved = !data.isReserved(page);
+        data.setReserved(page, reserved);
+        savePageSettings(data, page);
+        return reserved;
+    }
+
+    private void savePageSettings(PlayerInventoryData data, int page) {
+        UUID uuid = data.getUuid();
+        ItemStack icon = data.getIcon(page);
+        PageSettingsRow row = new PageSettingsRow(icon != null ? ItemCodec.encodeItem(icon) : null, data.isReserved(page));
+        queueDb(uuid, () -> {
+            plugin.getDatabaseManager().savePageSettings(uuid, page, row);
+            return null;
+        }).whenComplete((ignored, error) -> {
+            if (error != null) plugin.getLogger().log(Level.WARNING, "Réglages de la page " + page + " de " + uuid + " non écrits", error);
+        });
+    }
+
+    /** Réglages lus en base posés sur les pages chargées ; une icône illisible est ignorée (sélecteur par défaut). */
+    private void applyPageSettings(PlayerInventoryData data, Map<Integer, PageSettingsRow> settings) {
+        for (Map.Entry<Integer, PageSettingsRow> entry : settings.entrySet()) {
+            PageSettingsRow row = entry.getValue();
+            data.setReserved(entry.getKey(), row.reserved());
+            if (row.icon() == null || row.icon().isEmpty()) continue;
+            try {
+                data.setIcon(entry.getKey(), ItemCodec.decodeItem(row.icon()));
+            } catch (Exception e) {
+                plugin.getLogger().log(Level.WARNING, "Icône de la page " + entry.getKey() + " de " + data.getUuid() + " illisible : ignorée", e);
+            }
+        }
     }
 
     public ItemStack createBarrierItem(Integer page) {

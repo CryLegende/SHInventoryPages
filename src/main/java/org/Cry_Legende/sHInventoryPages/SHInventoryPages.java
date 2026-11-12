@@ -4,6 +4,7 @@ import org.Cry_Legende.sHInventoryPages.history.HistoryMenus;
 import org.Cry_Legende.sHInventoryPages.history.PageHistory;
 import org.Cry_Legende.sHInventoryPages.protection.WorldGuardPickupRules;
 import org.Cry_Legende.sHInventoryPages.api.ISHInventoryPagesAPI;
+import org.Cry_Legende.sHInventoryPages.commands.CommandPages;
 import org.Cry_Legende.sHInventoryPages.commands.CommandSHInventoryPages;
 import org.Cry_Legende.sHInventoryPages.config.ConfigManager;
 import org.Cry_Legende.sHInventoryPages.database.DatabaseManager;
@@ -13,6 +14,7 @@ import org.Cry_Legende.sHInventoryPages.inventory.InventoryManager;
 import org.Cry_Legende.sHInventoryPages.listeners.InventoryListener;
 import org.Cry_Legende.sHInventoryPages.listeners.OverflowListener;
 import org.Cry_Legende.sHInventoryPages.listeners.PlayerListener;
+import org.Cry_Legende.sHInventoryPages.menu.PagesMenu;
 import org.Cry_Legende.sHInventoryPages.network.NetworkLink;
 import org.Cry_Legende.sHInventoryPages.network.NetworkSync;
 import org.Cry_Legende.sHInventoryPages.network.ShNetworkLink;
@@ -49,6 +51,7 @@ public final class SHInventoryPages extends JavaPlugin {
     private BukkitTask historyPurgeTask;
     private PageHistory pageHistory;
     private HistoryMenus historyMenus;
+    private PagesMenu pagesMenu;
     private SHPlaceholders placeholders;
     private boolean fullyEnabled;
 
@@ -216,6 +219,8 @@ public final class SHInventoryPages extends JavaPlugin {
                 databaseManager.disconnect();
                 return false;
             }
+            // Facultative : sans elle, seuls les réglages des pages (icône, page réservée) manquent
+            databaseManager.createSettingsTable();
             return true;
         } catch (Exception e) {
             getLogger().log(Level.SEVERE, "Could not initialize database connection!", e);
@@ -227,6 +232,8 @@ public final class SHInventoryPages extends JavaPlugin {
     private void registerListeners() {
         PluginManager pm = getServer().getPluginManager();
         pm.registerEvents(new PlayerListener(this), this);
+        this.pagesMenu = new PagesMenu(this);
+        pm.registerEvents(pagesMenu, this);
         pm.registerEvents(new InventoryListener(this), this);
         pm.registerEvents(new OverflowListener(this), this);
         this.historyMenus = new HistoryMenus(this);
@@ -239,6 +246,11 @@ public final class SHInventoryPages extends JavaPlugin {
         CommandSHInventoryPages executor = new CommandSHInventoryPages(this);
         command.setExecutor(executor);
         command.setTabCompleter(executor);
+        PluginCommand pages = getCommand("pages");
+        if (pages == null) throw new IllegalStateException("Command 'pages' missing from plugin.yml");
+        CommandPages pagesExecutor = new CommandPages(this);
+        pages.setExecutor(pagesExecutor);
+        pages.setTabCompleter(pagesExecutor);
     }
 
     private void startTasks() {
@@ -323,6 +335,10 @@ public final class SHInventoryPages extends JavaPlugin {
 
     public HistoryMenus getHistoryMenus() {
         return historyMenus;
+    }
+
+    public PagesMenu getPagesMenu() {
+        return pagesMenu;
     }
 
     public boolean isFullyEnabled() {

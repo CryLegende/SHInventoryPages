@@ -3,9 +3,19 @@
 #----------------------------------------------------#
 # Pages d'inventaire supplémentaires par joueur, nombre selon la permission shinventorypages.pages.<n>, rangées en
 # base de données ; débordement des objets donnés à un joueur à inventaire plein vers ses autres pages ; ramassage
-# vers les autres pages quand l'inventaire porté est plein ; historique de toutes les pages pour le staff.
+# vers les autres pages quand l'inventaire porté est plein ; historique de toutes les pages pour le staff ; menu des
+# pages du joueur (page portée en un clic, icône et réserve de chaque page).
 #
-# Commandes (racine /shinventorypages, alias /ship) :
+# Sélecteur : clic droit = page suivante, clic gauche = page précédente, shift + clic = menu des pages, touche 1 à 9
+# au survol = page de ce numéro.
+#
+# Commandes des joueurs :
+#   /pages (alias /page)                          Menu des pages : une case par page, clic pour la porter
+#                                                 (shinventorypages.menu) ; clic droit sur une page, ou bouton du bas :
+#                                                 icône et réserve de la page (shinventorypages.menu.customize)
+#   /pages <numéro>                               Porte directement cette page (shinventorypages.menu)
+#
+# Commandes d'administration (racine /shinventorypages, alias /ship) :
 #   /shinventorypages reload                      Recharge config.yml et messages.yml (shinventorypages.admin.reload)
 #   /shinventorypages saveall                     Écrit les pages de tous les joueurs (shinventorypages.admin.saveall)
 #   /shinventorypages info <joueur>               Pages d'un joueur connecté (shinventorypages.admin.info)
@@ -16,7 +26,8 @@
 # Permissions : shinventorypages.admin (toutes les sous-commandes d'administration), shinventorypages.admin.reload,
 #               .saveall, .info et .recover (une chacune), shinventorypages.history,
 #               shinventorypages.history.restore, shinventorypages.pages.<n> (nombre de pages, ex.
-#               shinventorypages.pages.5) et shinventorypages.pages.* (plafond).
+#               shinventorypages.pages.5) et shinventorypages.pages.* (plafond), shinventorypages.menu et
+#               shinventorypages.menu.customize (ouvertes à tous tant qu'elles ne sont pas refusées).
 #
 # Les messages sont dans messages.yml. Tout est rechargeable par /shinventorypages reload, sauf les sections database et reseau
 # (redémarrage). Un fichier invalide annule le rechargement. Couleurs : codes & et &#RRGGBB. Sons : nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click) ;
@@ -121,17 +132,55 @@ switcher_item:
   name: '&bPages d''inventaire &7(&b%current_page%&7/&b%max_pages%&7)'
   lore:
     - ""
-    - "&7 Débloques des pages de l'inventaire"
-    - "&7 en complêtant certaines quêtes."
+    - "&7 Débloquez des pages de l'inventaire"
+    - "&7 en complétant certaines quêtes."
     - ""
     - "&7Clic droit &8&l» &bPage suivante"
-    - "&7Clic gauche &8&l» &bPage precedente"
+    - "&7Clic gauche &8&l» &bPage précédente"
+    - "&7Shift + clic &8&l» &bListe des pages"
+    - "&7Touche 1 à 9 &8&l» &bPage de ce numéro"
     - ""
   # Quantité affichée = numéro de la page portée ; sinon fixed_amount
   amount_equals_page: true
   fixed_amount: 1
   # Reflet d'enchantement
   enchant_glow: true
+
+# Menu des pages : /pages, ou shift + clic sur le sélecteur. Une case par page (28 au plus), avec ses emplacements
+# occupés et ses objets les plus nombreux ; un clic porte la page et ferme le menu. Les textes sont dans messages.yml.
+menu:
+  # false : ni menu ni /pages ; shift + clic sur le sélecteur change alors de page comme un clic simple
+  enabled: true
+  # Touche 1 à 9 au survol du sélecteur : porte la page de ce numéro
+  number_keys: true
+  # Pages pas encore débloquées affichées, grisées, jusqu'à inventory.max_possible_pages
+  show_locked_pages: true
+  # Objets les plus nombreux de chaque page listés dans sa description (0 = aucun)
+  preview_items: 3
+  # Réglages de chaque page par le joueur (clic droit sur une page, ou bouton du bas) :
+  #   - icône : un objet de son inventaire, jamais consommé. Le sélecteur en prend l'apparence quand la page est
+  #     portée, tout en restant l'objet de switcher_item.material (rien ne peut le vendre, le fabriquer ou le
+  #     compter comme l'objet imité). Un client antérieur à la 1.21.4 voit le sélecteur par défaut.
+  #   - page réservée : le rangement automatique (débordement, ramassage vers les pages, dons des plugins) la saute
+  #     tant qu'elle n'est pas portée.
+  customization: true
+  materials:
+    frame: "BLACK_STAINED_GLASS_PANE"
+    filler: "GRAY_STAINED_GLASS_PANE"
+    locked_page: "GRAY_DYE"
+    # Page dont la ligne en base est illisible (voir /shinventorypages info)
+    unreadable_page: "BARRIER"
+    customize: "COMPARATOR"
+    reserved_on: "LIME_DYE"
+    reserved_off: "GRAY_DYE"
+    reset_icon: "BARRIER"
+    back: "PAPER"
+  # Volume : sounds.volume ; coupés avec sounds.enabled
+  sounds:
+    open: "ui.toast.in"
+    navigate: "entity.bat.takeoff"
+    success: "entity.horse.armor"
+    deny: "entity.zombie.break_wooden_door"
 
 # Remplace le sélecteur dans les mondes interdits, pendant un blocage (parcours...) et pendant le chargement
 barrier_item:

@@ -5,6 +5,7 @@ import org.Cry_Legende.sHInventoryPages.history.HistoryRecord;
 import org.Cry_Legende.sHInventoryPages.inventory.PlayerInventoryData;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -64,6 +65,20 @@ public interface DatabaseManager {
     default void deleteDump(long id) throws Exception {
         throw new UnsupportedOperationException("Copies de secours en base : mode réseau seulement");
     }
+
+    // ------------------------------------------------------------------ réglages des pages (icône, page réservée)
+
+    /**
+     * Crée la table des réglages de pages si elle n'existe pas. Faux si elle est introuvable et impossible à créer :
+     * les réglages ne sont alors ni lus ni écrits, le reste du plugin n'en dépend pas.
+     */
+    boolean createSettingsTable();
+
+    /** Réglages des pages du joueur lus par son dernier chargement (repris une seule fois), par numéro de page. */
+    Map<Integer, PageSettingsRow> takePageSettings(UUID uuid);
+
+    /** Écrit les réglages d'une page ; une page sans réglage n'a pas de ligne. */
+    void savePageSettings(UUID uuid, int page, PageSettingsRow row) throws Exception;
 
     // ------------------------------------------------------------------ historique des pages
 

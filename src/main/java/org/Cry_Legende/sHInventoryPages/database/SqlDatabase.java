@@ -46,6 +46,10 @@ public abstract class SqlDatabase implements DatabaseManager {
     private final Map<UUID, Long> epochs = new ConcurrentHashMap<>();
     /** Mode réseau : ce que le dernier chargement a trouvé, repris une seule fois par le gestionnaire. */
     private final Map<UUID, NetworkLoad> networkLoads = new ConcurrentHashMap<>();
+    /** Réglages des pages lus par le dernier chargement de chaque joueur, repris une seule fois par le gestionnaire. */
+    private final Map<UUID, Map<Integer, PageSettingsRow>> loadedSettings = new ConcurrentHashMap<>();
+    /** La table des réglages de pages existe : sinon ils ne sont ni lus ni écrits. */
+    private volatile boolean settingsTable;
     /** Mode réseau (voir {@link #enableNetwork}) : base partagée par plusieurs serveurs. */
     protected volatile boolean network;
     protected volatile String serverName = "";
@@ -70,6 +74,12 @@ public abstract class SqlDatabase implements DatabaseManager {
 
     /** Création de la table shinventorypages_history, dans le dialecte de la base. */
     protected abstract String createHistoryTableSql();
+
+    /** Création de la table shinventorypages_page_settings, dans le dialecte de la base. */
+    protected abstract String createSettingsTableSql();
+
+    /** Insère ou remplace les réglages d'une page : paramètres uuid, page_number, icon, reserved. */
+    protected abstract String upsertSettingsSql();
 
     /** Création de l'index (uuid, reason, id) de shinventorypages_history, ou null s'il est créé avec la table. */
     protected String createHistoryIndexSql() {
@@ -117,6 +127,8 @@ public abstract class SqlDatabase implements DatabaseManager {
             epochs.put(uuid, claimed[0].epoch());
             networkLoads.put(uuid, claimed[0]);
         }
+        // Hors de la transaction des pages : des réglages illisibles ne font jamais échouer leur chargement
+        loadedSettings.put(uuid, readSettings(uuid));
 
         if (rows.isEmpty() && currentPage[0] == null) {
             stored.put(uuid, new ConcurrentHashMap<>());
@@ -209,6 +221,79 @@ public abstract class SqlDatabase implements DatabaseManager {
         storedCurrentPage.remove(uuid);
         epochs.remove(uuid);
         networkLoads.remove(uuid);
+        loadedSettings.remove(uuid);
+    }
+
+    // ------------------------------------------------------------------ réglages des pages
+
+    @Override
+    public boolean createSettingsTable() {
+        try {
+            withConnection(connection -> {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute(createSettingsTableSql());
+                }
+                return null;
+            });
+            settingsTable = true;
+        } catch (SQLException e) {
+            settingsTable = false;
+            plugin.getLogger().log(Level.SEVERE, "Table shinventorypages_page_settings introuvable et impossible à créer"
+                + " (voir sql/schema.sql) : icônes et pages réservées indisponibles", e);
+        }
+        return settingsTable;
+    }
+
+    private Map<Integer, PageSettingsRow> readSettings(UUID uuid) {
+        if (!settingsTable) return Map.of();
+        try {
+            return withConnection(connection -> {
+                Map<Integer, PageSettingsRow> settings = new HashMap<>();
+                try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT page_number, icon, reserved FROM shinventorypages_page_settings WHERE uuid = ?")) {
+                    ps.setString(1, uuid.toString());
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            settings.put(rs.getInt(1), new PageSettingsRow(rs.getString(2), rs.getInt(3) != 0));
+                        }
+                    }
+                }
+                return settings;
+            });
+        } catch (SQLException e) {
+            plugin.getLogger().log(Level.WARNING, "Réglages des pages de " + uuid + " illisibles : pages affichées sans eux", e);
+            return Map.of();
+        }
+    }
+
+    @Override
+    public Map<Integer, PageSettingsRow> takePageSettings(UUID uuid) {
+        Map<Integer, PageSettingsRow> settings = loadedSettings.remove(uuid);
+        return settings != null ? settings : Map.of();
+    }
+
+    @Override
+    public void savePageSettings(UUID uuid, int page, PageSettingsRow row) throws Exception {
+        if (!settingsTable) return;
+        withConnection(connection -> {
+            if (row.isDefault()) {
+                try (PreparedStatement ps = connection.prepareStatement(
+                    "DELETE FROM shinventorypages_page_settings WHERE uuid = ? AND page_number = ?")) {
+                    ps.setString(1, uuid.toString());
+                    ps.setInt(2, page);
+                    ps.executeUpdate();
+                }
+                return null;
+            }
+            try (PreparedStatement ps = connection.prepareStatement(upsertSettingsSql())) {
+                ps.setString(1, uuid.toString());
+                ps.setInt(2, page);
+                ps.setString(3, row.icon());
+                ps.setInt(4, row.reserved() ? 1 : 0);
+                ps.executeUpdate();
+            }
+            return null;
+        });
     }
 
     // ------------------------------------------------------------------ mode réseau

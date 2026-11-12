@@ -301,6 +301,40 @@ public class ConfigManager {
         return config.getBoolean("switcher_item.enchant_glow", true);
     }
 
+    // --- Menu des pages ---
+    public boolean isMenuEnabled() {
+        return config.getBoolean("menu.enabled", true);
+    }
+
+    /** Touches 1 à 9 au survol du sélecteur : page de ce numéro. */
+    public boolean isMenuNumberKeys() {
+        return config.getBoolean("menu.number_keys", true);
+    }
+
+    public boolean isMenuShowLockedPages() {
+        return config.getBoolean("menu.show_locked_pages", true);
+    }
+
+    /** Icône et page réservée réglables par le joueur. */
+    public boolean isMenuCustomization() {
+        return config.getBoolean("menu.customization", true);
+    }
+
+    /** Objets les plus nombreux d'une page listés dans sa description ; 0 = aucun. */
+    public int getMenuPreviewItems() {
+        return Math.max(0, config.getInt("menu.preview_items", 3));
+    }
+
+    /** Objet d'un élément du menu (menu.materials.&lt;name&gt;). */
+    public Material getMenuMaterial(String name, Material fallback) {
+        return material("menu.materials." + name, fallback);
+    }
+
+    /** Son d'une action du menu (menu.sounds.&lt;name&gt;), ou null si les sons sont coupés. */
+    public Sound getMenuSound(String name, String fallback) {
+        return soundsEnabled() ? getSound("menu.sounds." + name, fallback) : null;
+    }
+
     // --- Blacklist ---
     public List<String> getBlacklistedWorlds() {
         return config.getStringList("blacklist.worlds");

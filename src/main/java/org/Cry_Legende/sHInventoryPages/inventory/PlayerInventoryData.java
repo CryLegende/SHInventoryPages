@@ -40,6 +40,10 @@ public class PlayerInventoryData {
     private final Set<Integer> lockedPages = new HashSet<>();
     /** Objets lus au-delà des 36 emplacements d'une page enregistrée, à rendre au joueur après le chargement. */
     private final List<ItemStack> strayItems = new ArrayList<>();
+    /** Icône choisie par le joueur pour une page : objet d'origine réduit à son apparence. Absente : sélecteur par défaut. */
+    private final Map<Integer, ItemStack> icons = new HashMap<>();
+    /** Pages réservées par le joueur : jamais remplies par le rangement automatique (débordement, ramassage, dons). */
+    private final Set<Integer> reservedPages = new HashSet<>();
     /** Copie de sauvegarde uniquement : version de chaque page copiée. */
     private Map<Integer, Integer> snapshotVersions = Map.of();
     /** Mode réseau, copie de sauvegarde uniquement : version de session du chargement qui l'a produite (-1 sinon). */
@@ -89,6 +93,32 @@ public class PlayerInventoryData {
 
     public boolean isCurrentPageHidden() {
         return currentPage > maxPages;
+    }
+
+    /** Page que le joueur peut porter : dans son nombre de pages, et lisible. */
+    public boolean isAccessible(int pageNumber) {
+        return pageNumber >= 1 && pageNumber <= maxPages && !lockedPages.contains(pageNumber);
+    }
+
+    // --- Réglages du joueur (jamais dans une copie de sauvegarde : ils ont leur propre écriture) ---
+
+    /** Icône de la page, ou null pour le sélecteur par défaut. */
+    public ItemStack getIcon(int pageNumber) {
+        return icons.get(pageNumber);
+    }
+
+    public void setIcon(int pageNumber, ItemStack icon) {
+        if (icon == null || icon.isEmpty()) icons.remove(pageNumber);
+        else icons.put(pageNumber, icon);
+    }
+
+    public boolean isReserved(int pageNumber) {
+        return reservedPages.contains(pageNumber);
+    }
+
+    public void setReserved(int pageNumber, boolean reserved) {
+        if (reserved) reservedPages.add(pageNumber);
+        else reservedPages.remove(pageNumber);
     }
 
     public ItemStack[] getPage(int pageNumber) {
@@ -261,11 +291,16 @@ public class PlayerInventoryData {
         return pageNumber != currentPage && !lockedPages.contains(pageNumber);
     }
 
-    /** Place libre pour {@code template} sur les pages accessibles autres que la courante. */
+    /** Page où le rangement automatique peut poser un objet : ni la courante, ni illisible, ni réservée par le joueur. */
+    private boolean isFillable(int pageNumber) {
+        return isStorable(pageNumber) && !reservedPages.contains(pageNumber);
+    }
+
+    /** Place libre pour {@code template} sur les pages accessibles autres que la courante, pages réservées exclues. */
     int storedCapacity(ItemStack template, int reservedSlot) {
         int free = 0;
         for (int n = 1; n <= maxPages; n++) {
-            if (!isStorable(n)) continue;
+            if (!isFillable(n)) continue;
             ItemStack[] page = pages.get(n);
             free += SlotFiller.capacity(page != null ? page : new ItemStack[PAGE_SIZE], template, reservedSlot);
         }
@@ -278,13 +313,14 @@ public class PlayerInventoryData {
 
     /**
      * Range au plus {@code amount} exemplaires dans les pages accessibles autres que la courante, par numéro
-     * croissant : piles partielles puis emplacements vides d'une page, puis de la suivante.
+     * croissant : piles partielles puis emplacements vides d'une page, puis de la suivante. Une page réservée par
+     * le joueur est sautée.
      */
     StoredFill fillStoredPages(ItemStack template, int amount, int reservedSlot) {
         int remaining = amount;
         int firstPage = -1;
         for (int n = 1; n <= maxPages && remaining > 0; n++) {
-            if (!isStorable(n)) continue;
+            if (!isFillable(n)) continue;
             ItemStack[] page = pages.get(n);
             boolean created = page == null;
             if (created) page = new ItemStack[PAGE_SIZE];
