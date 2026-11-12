@@ -26,13 +26,16 @@ import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Le sélecteur de pages (et la barrière) est un objet d'interface : il ne quitte jamais son emplacement. Aucun
@@ -45,6 +48,11 @@ public class InventoryListener implements Listener {
     private final SHInventoryPages plugin;
     private final InventoryManager manager;
     private final ConfigManager config;
+    /**
+     * Emplacements annoncés par le client créatif de chaque joueur dans le tick en cours : {tick, nombre}. Un clic
+     * n'en annonce qu'un ; un inventaire vidé d'un coup les annonce tous.
+     */
+    private final Map<UUID, int[]> creativeSlots = new ConcurrentHashMap<>();
 
     public InventoryListener(SHInventoryPages plugin) {
         this.plugin = plugin;
@@ -56,6 +64,7 @@ public class InventoryListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (event instanceof InventoryCreativeEvent) countCreativeSlot(player);
         int switcherSlot = manager.getSwitcherSlot();
         Inventory clicked = event.getClickedInventory();
         boolean ownInventory = clicked instanceof PlayerInventory inventory && isHolder(inventory, player);
@@ -116,17 +125,50 @@ public class InventoryListener implements Listener {
             resyncLater(player);
             return;
         }
+        if (event instanceof InventoryCreativeEvent) {
+            creativeClick(player, event.getCursor());
+            return;
+        }
         switch (event.getClick()) {
             case RIGHT -> manager.switchPage(player, true);
             case LEFT -> manager.switchPage(player, false);
             case SHIFT_RIGHT -> openMenu(player, true);
             case SHIFT_LEFT -> openMenu(player, false);
-            // Le client n'envoie le clic molette qu'en mode créatif
+            // Clic molette : envoyé seulement par un client en mode créatif, devant un coffre ou un autre conteneur
             case MIDDLE -> openMenu(player, null);
             case NUMBER_KEY -> wearPage(player, event.getHotbarButton() + 1);
             default -> {
             }
         }
+    }
+
+    /**
+     * Inventaire du mode créatif : le client n'envoie pas le clic mais l'emplacement tel qu'il le voit ensuite, si bien
+     * que clic gauche, clic droit et shift + clic ne se distinguent pas. Le sélecteur pris en main (emplacement annoncé
+     * vide, ou réduit) ouvre le menu des pages ; un objet posé dessus, ou un inventaire vidé d'un coup, ne l'ouvre pas.
+     */
+    private void creativeClick(Player player, ItemStack announced) {
+        boolean taken = announced == null || announced.isEmpty() || manager.isSwitcherItem(announced);
+        if (!taken || !config.isMenuEnabled() || !PagesMenu.allowed(player, PagesMenu.PERMISSION)) return;
+        UUID uuid = player.getUniqueId();
+        int tick = Bukkit.getCurrentTick();
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            int[] burst = creativeSlots.get(uuid);
+            Player online = Bukkit.getPlayer(uuid);
+            if (online == null || (burst != null && burst[0] == tick && burst[1] > 1)) return;
+            plugin.getPagesMenu().open(online);
+        });
+    }
+
+    private void countCreativeSlot(Player player) {
+        int tick = Bukkit.getCurrentTick();
+        creativeSlots.compute(player.getUniqueId(), (uuid, burst) ->
+            burst == null || burst[0] != tick ? new int[]{tick, 1} : new int[]{tick, burst[1] + 1});
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        creativeSlots.remove(event.getPlayer().getUniqueId());
     }
 
     /** Shift + clic : menu des pages ; sans menu (désactivé, permission refusée), page suivante ou précédente comme un clic. */
