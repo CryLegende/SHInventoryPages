@@ -7,7 +7,9 @@ import io.papermc.paper.registry.data.dialog.action.DialogAction;
 import io.papermc.paper.registry.data.dialog.body.DialogBody;
 import io.papermc.paper.registry.data.dialog.input.DialogInput;
 import io.papermc.paper.registry.data.dialog.type.DialogType;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickCallback;
+import org.Cry_Legende.sHInventoryPages.DialogBlindness;
 import org.Cry_Legende.sHInventoryPages.SHInventoryPages;
 import org.Cry_Legende.sHInventoryPages.config.ConfigManager;
 import org.Cry_Legende.sHInventoryPages.inventory.InventoryManager;
@@ -36,11 +38,13 @@ public final class PageNameDialog {
     private final SHInventoryPages plugin;
     private final ConfigManager config;
     private final InventoryManager manager;
+    private final DialogBlindness blindness;
 
     public PageNameDialog(SHInventoryPages plugin) {
         this.plugin = plugin;
         this.config = plugin.getConfigManager();
         this.manager = plugin.getInventoryManager();
+        this.blindness = plugin.getDialogBlindness();
     }
 
     /** Ce client peut-il recevoir un dialogue ? Sans ViaVersion, tous les clients sont à la version du serveur. */
@@ -68,6 +72,7 @@ public final class PageNameDialog {
             ClickCallback.Options once = ClickCallback.Options.builder().uses(1).lifetime(Duration.ofMinutes(5)).build();
 
             List<DialogBody> body = new ArrayList<>();
+            body.add(DialogBody.plainMessage(MessageUtil.itemText(config.getRawMessage("pages_name_dialog_title").replace("%page%", number)), WIDTH));
             for (String line : config.getRawMessageList("pages_name_dialog_body")) {
                 body.add(DialogBody.plainMessage(MessageUtil.itemText(line.replace("%page%", number).replace("%max%", String.valueOf(max))), WIDTH));
             }
@@ -85,7 +90,8 @@ public final class PageNameDialog {
                 .width(BUTTON_WIDTH)
                 .action(DialogAction.customClick((response, audience) -> onMainThread(uuid, online -> plugin.getPagesMenu().openSettings(online, page)), once))
                 .build();
-            DialogBase base = DialogBase.builder(MessageUtil.itemText(config.getRawMessage("pages_name_dialog_title").replace("%page%", number)))
+            // titre vide : l'icône d'avertissement du client reste seule sur sa ligne, le titre est la première ligne du corps
+            DialogBase base = DialogBase.builder(Component.empty())
                 .canCloseWithEscape(true)
                 // Fermé au clic : le client ne retire pas son écran d'attente quand le serveur ferme le dialogue
                 .afterAction(DialogBase.DialogAfterAction.CLOSE)
@@ -94,7 +100,7 @@ public final class PageNameDialog {
                 .build();
             Dialog dialog = Dialog.create(factory -> factory.empty().base(base).type(DialogType.confirmation(confirm, cancel)));
             player.closeInventory();
-            player.showDialog(dialog);
+            blindness.show(player, dialog);
             return true;
         } catch (RuntimeException | LinkageError e) {
             plugin.getLogger().log(Level.WARNING, "Dialogue du nom de page impossible pour " + player.getName(), e);

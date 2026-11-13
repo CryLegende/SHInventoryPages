@@ -307,6 +307,11 @@ public class ConfigManager {
         return config.getBoolean("switcher_item.enchant_glow", true);
     }
 
+    /** Effet Cécité tant qu'un dialogue du plugin est affiché. */
+    public boolean isBlindDuringDialogs() {
+        return config.getBoolean("blind-during-dialogs", true);
+    }
+
     // --- Menu des pages ---
     public boolean isMenuEnabled() {
         return config.getBoolean("menu.enabled", true);

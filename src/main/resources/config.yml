@@ -33,6 +33,11 @@
 # (redémarrage). Un fichier invalide annule le rechargement. Couleurs : codes & et &#RRGGBB. Sons : nom (UI_BUTTON_CLICK) ou clé (minecraft:ui.button.click) ;
 # "" = aucun son.
 
+# Effet Cécité tant qu'un dialogue de ce plugin est affiché : le texte se lit sur fond noir. Il est retiré dès que le joueur
+# tourne la caméra, se déplace ou ouvre un inventaire (le client ne prévient pas le serveur quand il ferme un dialogue).
+# Un joueur déjà aveugle pour une autre raison n'est pas touché.
+blind-during-dialogs: true
+
 database:
   # "mariadb", "mysql" ou "sqlite"
   type: "mariadb"

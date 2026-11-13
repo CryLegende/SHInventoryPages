@@ -54,6 +54,7 @@ public final class SHInventoryPages extends JavaPlugin {
     private HistoryMenus historyMenus;
     private PagesMenu pagesMenu;
     private PageNameDialog pageNameDialog;
+    private DialogBlindness dialogBlindness;
     private SHPlaceholders placeholders;
     private boolean fullyEnabled;
 
@@ -68,6 +69,7 @@ public final class SHInventoryPages extends JavaPlugin {
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
+        this.dialogBlindness = new DialogBlindness(this, configManager.isBlindDuringDialogs());
         if (!setupDatabase()) {
             getLogger().severe("Database initialization failed: SHInventoryPages is disabled.");
             getServer().getPluginManager().disablePlugin(this);
@@ -170,6 +172,9 @@ public final class SHInventoryPages extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (dialogBlindness != null) {
+            dialogBlindness.shutdown();
+        }
         cancelTasks();
         if (fullyEnabled && inventoryManager != null) {
             // Joueurs encore connectés (arrêt du serveur, rechargement) : capture et écriture avant de fermer la base
@@ -304,6 +309,7 @@ public final class SHInventoryPages extends JavaPlugin {
         if (!fullyEnabled) return;
         int oldSlot = inventoryManager.getSwitcherSlot();
         configManager.reloadStrict();
+        dialogBlindness.setEnabled(configManager.isBlindDuringDialogs());
         inventoryManager.saveAllNow();
         inventoryManager.updateSettingsFromConfig();
         pageHistory.reload();
@@ -346,6 +352,10 @@ public final class SHInventoryPages extends JavaPlugin {
 
     public PageNameDialog getPageNameDialog() {
         return pageNameDialog;
+    }
+
+    public DialogBlindness getDialogBlindness() {
+        return dialogBlindness;
     }
 
     public boolean isFullyEnabled() {
