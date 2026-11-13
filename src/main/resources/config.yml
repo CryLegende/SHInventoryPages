@@ -49,7 +49,7 @@ database:
   mysql:
     host: 127.0.0.1
     port: 3306
-    database: Opale
+    database: minecraft
     username: utilisateur
     password: 'CHANGE_ME'
     # Propriétés JDBC supplémentaires
@@ -111,13 +111,10 @@ overflow:
   # Objets posés au sol qui sont des mécaniques du monde ou des décors, jamais des dons : nom d'un plugin (tout le
   # plugin) ou classe/paquet Java (une seule mécanique, le reste du plugin garde ses dons)
   ignored_plugins:
-    # Sortie des générateurs ; les générateurs rendus au joueur restent des dons
-    - "me.kafein.elitegenerator.feature.DropRouter"
-    # Objets de bonus et cookies décoratifs (rendus non ramassables juste après leur apparition)
-    - "SHItemsBoosts"
-    - "SHCookieClicker"
-    # Billets ramassés pour de l'argent
-    - "MoneyFromMobs"
+    # Un plugin entier, par son nom
+    - "ExemplePlugin"
+    # Une seule mécanique d'un plugin, par sa classe ou son paquet Java
+    - "com.exemple.plugin.DropRouter"
   # Objets qui tombent d'un bloc que le joueur vient de casser (minage à distance)
   capture_broken_block_drops: true
   # Autour d'une mort ou d'un distributeur, et d'une explosion (blocs) : objets du monde, jamais rangés
@@ -139,8 +136,8 @@ switcher_item:
   name_with_page_name: '&bPages d''inventaire &7(&b%current_page%&7/&b%max_pages%&7) &8· &f%page_name%'
   lore:
     - ""
-    - "&7 Débloquez des pages de l'inventaire"
-    - "&7 en complétant certaines quêtes."
+    - "&7 Des pages d'inventaire en plus"
+    - "&7 pour ranger vos objets."
     - ""
     - "&7Clic droit &8&l» &bPage suivante"
     - "&7Clic gauche &8&l» &bPage précédente"
@@ -210,8 +207,8 @@ barrier_item:
 blacklist:
   # Mondes où l'on ne change pas de page
   worlds:
-    - "arene"
-    - "Revent"
+    - "world_nether"
+    - "world_the_end"
 
 sounds:
   # Coupe tous les sons du plugin
