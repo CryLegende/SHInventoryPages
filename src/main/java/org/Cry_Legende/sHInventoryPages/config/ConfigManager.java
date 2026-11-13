@@ -309,7 +309,7 @@ public class ConfigManager {
 
     /** Effet Cécité tant qu'un dialogue du plugin est affiché. */
     public boolean isBlindDuringDialogs() {
-        return config.getBoolean("blind-during-dialogs", true);
+        return config.getBoolean("blind_during_dialogs", true);
     }
 
     // --- Menu des pages ---

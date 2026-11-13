@@ -68,7 +68,12 @@ public final class DialogBlindness implements Listener {
      */
     public void show(Player player, Dialog dialog) {
         blind(player);
-        player.showDialog(dialog);
+        try {
+            player.showDialog(dialog);
+        } catch (RuntimeException e) {
+            sync(() -> clear(player));
+            throw e;
+        }
     }
 
     /**
